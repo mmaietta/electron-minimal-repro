@@ -12,7 +12,13 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "serve": "node server/update-server.mjs",
+    "build": "electron-builder --publish never",
+    "release": "node scripts/release.mjs",
+    "publish:copy": "node scripts/publish-copy.mjs",
+    "link-builder": "node scripts/link-local-builder.mjs",
+    "unlink-builder": "node scripts/link-local-builder.mjs --unlink"
   },
   "dependencies": {
     "electron-updater": "7.0.0-alpha.7"
