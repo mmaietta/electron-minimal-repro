@@ -1,0 +1,13 @@
+# Read by electron-updater when `autoUpdater.forceDevUpdateConfig = true` (main.js sets it for unpackaged runs).
+# Mirrors the app-update.yml electron-builder embeds into a packaged build from the "generic" publish entry.
+provider: generic
+url: http://127.0.0.1:8080/
+channel: latest
+# Required by electron-updater to locate its download cache (electron-builder writes it automatically).
+updaterCacheDirName: autoupdate-proto-updater
+# Signed update manifests (electron-builder PR #9877): paste the public key printed by
+# `pnpm exec electron-builder create-update-key --out keys/` to enforce verification in dev mode too.
+# updateManifestPublicKey: |
+#   -----BEGIN PUBLIC KEY-----
+#   ...
+#   -----END PUBLIC KEY-----

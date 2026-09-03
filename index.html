@@ -5,15 +5,37 @@
     <!-- https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP -->
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'">
     <link href="./styles.css" rel="stylesheet">
-    <title>Hello World!</title>
+    <title>AutoUpdateProto</title>
   </head>
   <body>
     <h1>Hello World!</h1>
-    We are using Node.js <span id="node-version"></span>,
-    Chromium <span id="chrome-version"></span>,
-    and Electron <span id="electron-version"></span>.
+    <p id="runtime">Electron / Chromium / Node versions load here.</p>
+    <p id="info">App version: <b id="app-version">?</b> | channel: <b id="channel">?</b> | feed: <code id="feed-url">?</code></p>
+    <p id="info2"><small id="info-extra"></small></p>
 
-    <!-- You can also require other files to run in this process -->
+    <p>
+      <label>Channel
+        <select id="channel-select">
+          <option value="latest">latest</option>
+          <option value="beta">beta</option>
+          <option value="alpha">alpha</option>
+        </select>
+      </label>
+      <button id="check">Check for updates</button>
+    </p>
+
+    <p id="status">Status: idle</p>
+    <p id="progress"></p>
+
+    <p id="install-buttons" hidden>
+      <button id="install-on-quit">Update on quit</button>
+      <button id="install-next-launch">Update on next launch</button>
+      <button id="install-skip">Quit without updating</button>
+    </p>
+
+    <h3>Events</h3>
+    <pre id="log"></pre>
+
     <script src="./renderer.js"></script>
   </body>
 </html>
