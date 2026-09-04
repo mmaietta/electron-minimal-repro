@@ -1,22 +1,30 @@
 {
-  "name": "minimal-repro",
+  "name": "autoupdate-proto",
+  "productName": "AutoUpdateProto",
   "version": "1.0.0",
-  "description": "A minimal Electron application",
+  "description": "Barebones electron-builder v27 / electron-updater v7 auto-update prototype",
   "main": "main.js",
-  "scripts": {
-    "start": "electron ."
-  },
-  "repository": "https://github.com/electron/minimal-repro",
-  "keywords": [
-    "Electron",
-    "quick",
-    "start",
-    "tutorial",
-    "demo"
-  ],
-  "author": "GitHub",
+  "author": "Mike Maietta",
   "license": "CC0-1.0",
+  "private": true,
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "start": "electron .",
+    "serve": "node server/update-server.mjs",
+    "build": "electron-builder --publish never",
+    "release": "node scripts/release.mjs",
+    "publish:copy": "node scripts/publish-copy.mjs",
+    "link-builder": "node scripts/link-local-builder.mjs",
+    "unlink-builder": "node scripts/link-local-builder.mjs --unlink"
+  },
+  "dependencies": {
+    "electron-updater": "7.0.0-alpha.7"
+  },
   "devDependencies": {
-    "electron": "^44.0.0"
+    "electron": "^44.0.0",
+    "electron-builder": "27.0.0-alpha.8"
   }
 }
