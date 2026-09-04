@@ -17,11 +17,12 @@ import http from "node:http"
 import os from "node:os"
 import path from "node:path"
 import { pipeline } from "node:stream/promises"
+import { fileURLToPath } from "node:url"
 
 const args = parseArgs(process.argv.slice(2))
 const port = Number(args.port ?? 8080)
 const host = args.host ?? "127.0.0.1"
-const root = path.resolve(args.dir ?? path.join(path.dirname(new URL(import.meta.url).pathname), "updates"))
+const root = path.resolve(args.dir ?? path.join(path.dirname(fileURLToPath(import.meta.url)), "updates"))
 fs.mkdirSync(root, { recursive: true })
 
 const MULTIPART_BOUNDARY = "electron-updater-range-boundary"

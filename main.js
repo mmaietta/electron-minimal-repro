@@ -98,7 +98,7 @@ function readUpdateConfig() {
         result[m[1]] = m[2].replace(/^['"]|['"]$/g, "")
       }
     }
-    result.hasPublicKey = /^updateManifestPublicKey:/m.test(text)
+    result.hasPublicKey = /^(?!\s*#)\s*updateManifestPublicKey:/m.test(text)
   } catch (e) {
     result.error = e.message
   }

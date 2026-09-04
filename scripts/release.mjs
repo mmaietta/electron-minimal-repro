@@ -12,8 +12,9 @@
 import { spawnSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
+import { fileURLToPath } from "node:url"
 
-const projectDir = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..")
+const projectDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const argv = process.argv.slice(2)
 
 function flag(name) {
