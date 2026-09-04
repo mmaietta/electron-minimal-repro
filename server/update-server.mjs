@@ -34,8 +34,14 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost")
   const finish = () => {
     const ms = Date.now() - startedAt
+    let pathname
+    try {
+      pathname = decodeURIComponent(url.pathname)
+    } catch {
+      pathname = url.pathname
+    }
     console.log(
-      `${new Date().toISOString()} ${req.method} ${decodeURIComponent(url.pathname)} -> ${res.statusCode}` +
+      `${new Date().toISOString()} ${req.method} ${pathname} -> ${res.statusCode}` +
         `${rangeHeader ? ` range="${rangeHeader}"` : ""} bytes=${counter.bytes} ${ms}ms`
     )
   }
