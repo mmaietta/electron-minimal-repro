@@ -23,7 +23,8 @@ async function refreshInfo() {
   $("info-extra").textContent =
     `isPackaged=${info.isPackaged} platform=${info.platform}/${info.arch} provider=${info.provider} ` +
     `autoInstallEvent=${info.autoInstallEvent} allowDowngrade=${info.allowDowngrade} ` +
-    `signedManifests=${info.signedManifests} electron-updater=${info.electronUpdaterVersion}`
+    `signedManifests=${info.signedManifests} electron-updater=${info.electronUpdaterVersion} ` +
+    `qa=[${info.qaToggles.join(" ") || "-"}] log=${info.qaLogFile}`
   if ([...$("channel-select").options].some(o => o.value === info.channel)) {
     $("channel-select").value = info.channel
   }
