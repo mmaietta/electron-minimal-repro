@@ -1,0 +1,5 @@
+{
+  "appId": "com.mmaietta.autoupdate-proto.migrate-check",
+  "publish": [{ "provider": "generic", "url": "http://qa.example.com:8080/?token=abc" }],
+  "toolsets": { "appimage": "1.2.0", "linuxToolsMac": "1.1.1" }
+}

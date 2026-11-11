@@ -5,3 +5,5 @@ update-private-key.pem
 server/updates/*
 !server/updates/.gitkeep
 dist-probe/
+qa-scratch/
+qa-logs/
