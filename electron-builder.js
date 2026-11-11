@@ -8,6 +8,20 @@ const { ALLOW_EXTERNAL_LINKS_OPTION } = require("../electron-builder-5/packages/
 const url = process.env.UPDATE_SERVER_URL || "http://127.0.0.1:8080/"
 const channel = process.env.UPDATE_CHANNEL || "latest"
 
+// QA build knobs (QA_TEST_PLAN.md); all unset = the normal build.
+//   QA_WIN_TARGETS  comma-separated Windows targets, default "nsis,portable". squirrel writes no app-update.yml, so
+//                   electron-updater cannot update it (QA_WIN_TARGETS=squirrel still builds it).
+//   QA_WEB=1        adds the nsis-web target (its latest.yml lands in dist/nsis-web/)
+//   QA_NSIS_LOG=1   nsis.installerDebugLogging: the log-enabled NSIS stubs write install.log (nsis and nsis-web)
+//   QA_BLOCKMAP     "v2" | "v3" | "latest": the .blockmap format (default: chosen from electronUpdaterCompatibility = v3)
+//   QA_SCAN_PROBE=1 packages only qa/probe-main.js (no mention of the cross-origin property) into dist-probe/, to see
+//                   the build warning for apps that do not configure it
+const winTargets = (process.env.QA_WIN_TARGETS || "nsis,portable").split(",").map(it => it.trim()).filter(it => it.length > 0)
+if (process.env.QA_WEB === "1" && !winTargets.includes("nsis-web")) {
+  winTargets.push("nsis-web")
+}
+const scanProbe = process.env.QA_SCAN_PROBE === "1"
+
 /** @type {import("electron-builder").Configuration} */
 module.exports = {
   appId: "com.mmaietta.autoupdate-proto",
@@ -16,13 +30,15 @@ module.exports = {
   //   wine: "system",
   // },
   directories: {
-    output: "dist",
+    output: scanProbe ? "dist-probe" : "dist",
     buildResources: "build", // build/electron-publisher-custom.js lives here (PublishManager.requireProviderClass)
   },
   fileOptions: {
-    files: ["main.js", "preload.js", "renderer.js", "index.html", "styles.css"],
+    files: scanProbe ? ["qa/probe-main.js"] : ["main.js", "preload.js", "renderer.js", "index.html", "styles.css"],
     allowExternalLinks: true
   },
+  ...(scanProbe ? { extraMetadata: { main: "qa/probe-main.js" } } : {}),
+  ...(process.env.QA_BLOCKMAP ? { blockmap: process.env.QA_BLOCKMAP } : {}),
   // v27: root `npmRebuild` moved under `nativeModules` (website/docs/migration/v27-breaking-changes.md).
   nativeModules: { npmRebuild: false },
   // latest -> also writes alpha*.yml + beta*.yml; beta -> also alpha*.yml (updateInfoBuilder.computeChannelNames)
@@ -50,14 +66,21 @@ module.exports = {
     },
   },
   win: {
-    target: ["squirrel"],
+    target: winTargets,
   },
   nsis: {
     oneClick: true,
     perMachine: false, // per-user install: electron-updater can install silently and on next launch without UAC
+    installerDebugLogging: process.env.QA_NSIS_LOG === "1",
+  },
+  portable: {
+    // a space in the extracted path is what the portable launcher's quoting fix (#10591) is about
+    unpackDirName: "QA Portable",
   },
   linux: {
-    target: ["AppImage"],
+    target: ["AppImage", "deb"],
     category: "Utility",
+    // deb needs a maintainer with an email; package.json author has none
+    maintainer: "AutoUpdateProto QA <qa@example.invalid>",
   },
 }

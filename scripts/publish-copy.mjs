@@ -3,7 +3,7 @@
 //
 //   node scripts/publish-copy.mjs [--from dist] [--to server/updates]
 //
-// Copies dist/*.{yml,exe,blockmap,zip,dmg,AppImage} (top level only — dist/custom/*.yml are the duplicates the custom
+// Copies dist/*.{yml,exe,blockmap,zip,dmg,AppImage,deb,rpm} (top level only — dist/custom/*.yml are the duplicates the custom
 // publisher uploads, dist/<platform>-unpacked/ are not artifacts).
 import fs from "node:fs"
 import path from "node:path"
@@ -17,7 +17,7 @@ const option = (name, fallback) => {
 }
 const from = path.resolve(projectDir, option("from", "dist"))
 const to = path.resolve(projectDir, option("to", "server/updates"))
-const extensions = new Set([".yml", ".exe", ".blockmap", ".zip", ".dmg", ".AppImage"])
+const extensions = new Set([".yml", ".exe", ".blockmap", ".zip", ".dmg", ".AppImage", ".deb", ".rpm"])
 
 if (!fs.existsSync(from)) {
   console.error(`nothing to copy: ${from} does not exist (run \`pnpm release --version X.Y.Z\` first)`)

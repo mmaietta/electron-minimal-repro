@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 // Bump package.json version, then run electron-builder with the update-server URL/channel exported for electron-builder.js.
 //
-//   node scripts/release.mjs --version 1.0.1 [--channel latest|beta|alpha] [--publish] [--mac] [--win] [--linux] [--dir]
+//   node scripts/release.mjs --version 1.0.1 [--channel latest|beta|alpha] [--publish] [--mac] [--win] [--linux]
+//                            [--x64] [--arm64] [--ia32] [--universal] [--dir]
+//
+//   --x64 ...   passed through to electron-builder; without one it builds for the host arch (arm64 on Apple silicon)
 //
 //   --publish   `electron-builder --publish always`: build/electron-publisher-custom.js PUTs artifacts + yml to the server.
 //               Without it: `--publish never` (v27 has no implicit publish) — files stay in dist/, use `pnpm publish:copy`.
@@ -29,7 +32,7 @@ function option(name) {
 
 const version = option("version")
 if (!version || !/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(version)) {
-  console.error("usage: pnpm release --version X.Y.Z[-pre.N] [--channel latest|beta|alpha] [--publish] [--mac] [--win] [--linux] [--dir]")
+  console.error("usage: pnpm release --version X.Y.Z[-pre.N] [--channel latest|beta|alpha] [--publish] [--mac] [--win] [--linux] [--x64|--arm64|--ia32|--universal] [--dir]")
   process.exit(2)
 }
 const channel = option("channel") ?? process.env.UPDATE_CHANNEL ?? "latest"
@@ -47,6 +50,9 @@ console.log(`version: ${previousVersion} -> ${version}`)
 const builderArgs = []
 for (const platform of ["mac", "win", "linux"]) {
   if (flag(platform)) builderArgs.push(`--${platform}`)
+}
+for (const arch of ["x64", "arm64", "ia32", "universal"]) {
+  if (flag(arch)) builderArgs.push(`--${arch}`)
 }
 if (flag("dir")) builderArgs.push("--dir")
 builderArgs.push("--publish", flag("publish") ? "always" : "never")

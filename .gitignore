@@ -4,3 +4,4 @@ keys/
 update-private-key.pem
 server/updates/*
 !server/updates/.gitkeep
+dist-probe/
