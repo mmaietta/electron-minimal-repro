@@ -20,7 +20,11 @@ Only three npm packages are used: `electron`, `electron-builder`, `electron-upda
 - Node.js >= 22.12 (electron-builder v27 minimum) and pnpm 10 (`corepack enable` picks up `packageManager`).
 - macOS: a Developer ID Application certificate in the default keychain (or `CSC_NAME`/`CSC_LINK`) — Squirrel.Mac refuses
   to install unsigned updates, so the macOS flow needs signed builds. Windows/Linux: nothing extra.
-- For Windows/Linux testing from a VM: the VM must reach the host's LAN IP on port 8080.
+- For Windows/Linux testing from a VM: forward the VM's `127.0.0.1:8080` to the host (see
+  [Testing from a VM](#testing-from-a-vm--another-machine)). electron-updater 7.0.0-alpha.14 rejects plain http to a
+  host that is not loopback, so a LAN URL fails every check with `ERR_UPDATER_INSECURE_FEED`.
+- Windows: a code-signing certificate (`WIN_CSC_LINK`) or `win.verifyUpdateCodeSignature: false`. v27 fails a Windows
+  build whose `app-update.yml` would have no `publisherName`.
 
 ```sh
 pnpm install
@@ -59,8 +63,9 @@ Without `--publish` the build only lands in `dist/` (`electron-builder --publish
   `quitAndInstall()` takes an options object `{ isSilent, isForceRunAfter, waitUntilNextLaunch }`.
 - **Windows (NSIS, per-user, oneClick)**: on-quit runs `Setup.exe --updated /S`. Next-launch is installed automatically at
   startup only for per-user installs (per-machine would need UAC, so the updater keeps the pending marker for an explicit
-  `installPendingUpdateIfAvailable()` call — main.js always makes that call). Unsigned builds are fine: the updater only
-  verifies the installer signature when `publisherName` is in `app-update.yml`.
+  `installPendingUpdateIfAvailable()` call — main.js makes that call unless `QA_EXPLICIT_PENDING=0`). The updater
+  installs an NSIS update only when its Authenticode signature matches `publisherName` (v27 fails closed), so test with
+  signed builds; a self-signed certificate works once the VM trusts it (`Cert:\LocalMachine\Root`).
 - **Linux (AppImage)**: the running AppImage file is replaced in place (`APPIMAGE` env must be set — i.e. run the AppImage
   itself, not an extracted dir); next-launch is supported automatically. The install path is where the AppImage lives.
 - **macOS**: electron-updater proxies the zip to the native Squirrel.Mac updater; **the app must be code signed**
@@ -149,14 +154,36 @@ same verification with `pnpm start`. `create-update-key --out` expects a file pa
 
 ## Testing from a VM / another machine
 
+Keep the default feed `http://127.0.0.1:8080/` and make the VM's loopback port reach the host. electron-updater
+7.0.0-alpha.14 allows plain http only to a loopback host (`localhost`, `127.0.0.0/8`, `::1`), so an app built with a LAN
+URL fails every check with `ERR_UPDATER_INSECURE_FEED`.
+
 ```sh
-pnpm serve --host 0.0.0.0                    # prints http://<lan-ip>:8080/ for every interface
-UPDATE_SERVER_URL=http://<host-ip>:8080/ pnpm release --version 1.0.0 --win --publish
+pnpm serve --host 0.0.0.0                    # host: listen on every interface
+
+# Windows VM (elevated); on Parallels shared networking the host is usually 10.211.55.2
+netsh interface portproxy add v4tov4 listenaddress=127.0.0.1 listenport=8080 connectaddress=<host-ip> connectport=8080
+# Linux VM
+socat TCP-LISTEN:8080,bind=127.0.0.1,reuseaddr,fork TCP:<host-ip>:8080
+
+curl http://127.0.0.1:8080/                  # from the VM: the server's listing
 ```
 
-`UPDATE_SERVER_URL` is written into the app's `app-update.yml` (generic provider) and used by the custom publisher, so the
-installed app polls the host from inside the VM. Cross-building Windows NSIS from macOS/Linux works (electron-builder
-downloads its NSIS toolchain); build Linux AppImages on Linux or in the VM itself.
+Cross-building Windows NSIS, nsis-web and portable from macOS works without Wine (electron-builder downloads its NSIS
+toolchain); `--x64` / `--arm64` pick the arch (the default is the host's). Linux AppImage and deb also build on macOS.
+
+## QA toggles
+
+`QA_TEST_PLAN.md` is the test plan for electron-updater 7.0.0-alpha.14 / electron-builder 27.0.0-alpha.15. It relies on:
+
+- `QA_*` environment variables read by `main.js` (cross-origin header policy, auth headers, feed URL, channel,
+  `allowInsecureFeed`, `login` handler, install modes, cancel, Windows `publisherName` / `installDirectory`,
+  `QA_AUTO_CHECK=1`), all listed at the top of `QA_TEST_PLAN.md`. Active toggles show in the window's info line, and
+  every log line also goes to `<userData>/updater-qa.log`.
+- `server/update-server.mjs` flags: `--redirect-match/--redirect-to`, `--auth`, `--throttle-kbps`, `--extra-bytes`;
+  its log lists request header and query parameter names (never values).
+- `QA_*` build knobs in `electron-builder.js` (Windows targets, nsis-web, NSIS debug logging, blockmap format, scan probe).
+- `node scripts/qa.mjs`: manifest stash/serve, generated QA manifests, cache seeding, dev-mode manifest key.
 
 ## How publishing is wired
 
