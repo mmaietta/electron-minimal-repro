@@ -2,6 +2,8 @@
 // Zero-dependency update server for the electron-updater "generic" provider.
 //
 //   node server/update-server.mjs [--port 8080] [--host 127.0.0.1] [--dir server/updates]
+//                                 [--redirect-match <regex> --redirect-to <base-url> [--redirect-status 302]]
+//                                 [--auth <regex>] [--throttle-kbps <n>] [--extra-bytes <file>:<n>]
 //
 // - GET/HEAD /<file>   static file with Content-Length + Accept-Ranges.
 //                      Single Range  -> 206 with Content-Range.
@@ -11,11 +13,22 @@
 // - PUT/POST /<file>   receives an upload from build/electron-publisher-custom.js. Written atomically
 //                      (tmp file + rename) -> 201 Created.
 // - GET /              plain-text listing of the directory.
-// - Every request is logged: method, path, status, range, bytes.
+// - Every request is logged: method, path, status, range, body bytes actually sent, the Host, the NAMES of the
+//   request headers and query parameters (never their values), and ABORTED when the client closed the connection
+//   before the response ended.
+//
+// QA options (QA_TEST_PLAN.md). Pass them as `--flag value`:
+//   --redirect-match <regex>   GET/HEAD paths matching it are answered with a redirect to
+//   --redirect-to <base-url>   <base-url><path><query>, e.g. another port (another origin) for cross-origin tests
+//   --redirect-status <n>      301 | 302 | 303 | 307 | 308, default 302
+//   --auth <regex>             paths matching it need `Authorization: Basic qa:secret`, else 401 + WWW-Authenticate
+//   --throttle-kbps <n>        send response bodies at about n KiB/s (cancel tests)
+//   --extra-bytes <file>:<n>   a full GET of <file> gets n zero bytes more than the file (size-cap tests)
 import fs from "node:fs"
 import http from "node:http"
 import os from "node:os"
 import path from "node:path"
+import { Readable, Transform } from "node:stream"
 import { pipeline } from "node:stream/promises"
 import { fileURLToPath } from "node:url"
 
@@ -26,13 +39,27 @@ const root = path.resolve(args.dir ?? path.join(path.dirname(fileURLToPath(impor
 fs.mkdirSync(root, { recursive: true })
 
 const MULTIPART_BOUNDARY = "electron-updater-range-boundary"
+const QA_BASIC_AUTH = `Basic ${Buffer.from("qa:secret").toString("base64")}`
+const redirectMatch = typeof args["redirect-match"] === "string" ? new RegExp(args["redirect-match"]) : null
+const redirectTo = typeof args["redirect-to"] === "string" ? args["redirect-to"].replace(/\/+$/, "") : null
+const redirectStatus = Number(args["redirect-status"] ?? 302)
+const authMatch = typeof args.auth === "string" ? new RegExp(args.auth) : null
+const throttleBytesPerSecond = Number(args["throttle-kbps"] ?? 0) * 1024
+const extraBytes = parseExtraBytes(args["extra-bytes"])
+if ((redirectMatch == null) !== (redirectTo == null)) {
+  console.error("--redirect-match and --redirect-to must be used together")
+  process.exit(2)
+}
 
 const server = http.createServer(async (req, res) => {
   const startedAt = Date.now()
   const counter = { bytes: 0 }
   const rangeHeader = req.headers.range
   const url = new URL(req.url ?? "/", "http://localhost")
-  const finish = () => {
+  let logged = false
+  const finish = aborted => {
+    if (logged) return
+    logged = true
     const ms = Date.now() - startedAt
     let pathname
     try {
@@ -40,17 +67,32 @@ const server = http.createServer(async (req, res) => {
     } catch {
       pathname = url.pathname
     }
+    const headerNames = Object.keys(req.headers).sort().join(",")
+    const queryNames = [...new Set(url.searchParams.keys())].join(",")
     console.log(
       `${new Date().toISOString()} ${req.method} ${pathname} -> ${res.statusCode}` +
-        `${rangeHeader ? ` range="${rangeHeader}"` : ""} bytes=${counter.bytes} ${ms}ms`
+        `${rangeHeader ? ` range="${rangeHeader}"` : ""} bytes=${counter.bytes} ${ms}ms` +
+        ` host=${req.headers.host ?? "-"} hdr=[${headerNames}]${queryNames ? ` q=[${queryNames}]` : ""}${aborted ? " ABORTED" : ""}`
     )
   }
-  res.once("finish", finish)
+  res.once("finish", () => finish(false))
   res.once("close", () => {
-    if (!res.writableFinished) finish()
+    if (!res.writableFinished) finish(true)
   })
 
   try {
+    if (authMatch != null && authMatch.test(url.pathname) && req.headers.authorization !== QA_BASIC_AUTH) {
+      res.writeHead(401, { "WWW-Authenticate": 'Basic realm="qa"', "Content-Length": 0 })
+      res.end()
+      return
+    }
+
+    if (redirectMatch != null && redirectTo != null && (req.method === "GET" || req.method === "HEAD") && redirectMatch.test(url.pathname)) {
+      res.writeHead(redirectStatus, { Location: `${redirectTo}${url.pathname}${url.search}`, "Content-Length": 0 })
+      res.end()
+      return
+    }
+
     const resolved = resolveSafe(url.pathname)
     if (resolved == null) {
       return send(res, 403, "Forbidden: path escapes the updates directory\n")
@@ -65,7 +107,7 @@ const server = http.createServer(async (req, res) => {
       if (stat == null || !stat.isFile()) {
         return send(res, 404, `Not found: ${relative}\n`)
       }
-      await serveFile(req, res, filePath, stat, rangeHeader, counter)
+      await serveFile(req, res, filePath, stat, rangeHeader, counter, extraBytes.get(relative) ?? 0)
       return
     }
 
@@ -92,8 +134,8 @@ const server = http.createServer(async (req, res) => {
     res.setHeader("Allow", "GET, HEAD, PUT, POST")
     send(res, 405, "Method not allowed\n")
   } catch (e) {
-    if (e?.code === "ERR_STREAM_PREMATURE_CLOSE" && res.writableFinished) {
-      return // client closed the keep-alive socket right after a completed response; nothing to report
+    if (e?.code === "ERR_STREAM_PREMATURE_CLOSE" || e?.code === "EPIPE" || e?.code === "ECONNRESET") {
+      return // the client closed the connection; the close handler logs it (ABORTED unless the response had ended)
     }
     console.error(e)
     if (!res.headersSent) {
@@ -108,6 +150,9 @@ server.listen(port, host, () => {
   console.log(`update server serving ${root}`)
   for (const address of listenUrls(host, port)) {
     console.log(`  ${address}`)
+  }
+  for (const line of describeQaOptions()) {
+    console.log(`  qa: ${line}`)
   }
   console.log("release with:  UPDATE_SERVER_URL=<one of the URLs above> pnpm release --version X.Y.Z --publish")
 })
@@ -130,10 +175,39 @@ function parseArgs(argv) {
     }
   }
   if (out.help) {
-    console.log("usage: node server/update-server.mjs [--port 8080] [--host 127.0.0.1] [--dir server/updates]")
+    console.log(
+      "usage: node server/update-server.mjs [--port 8080] [--host 127.0.0.1] [--dir server/updates]\n" +
+        "         [--redirect-match <regex> --redirect-to <base-url> [--redirect-status 302]] [--auth <regex>]\n" +
+        "         [--throttle-kbps <n>] [--extra-bytes <file>:<n>]"
+    )
     process.exit(0)
   }
   return out
+}
+
+// "--extra-bytes AutoUpdateProto-1.0.1-arm64-mac.zip:20000000" -> Map { name => 20000000 }
+function parseExtraBytes(value) {
+  const result = new Map()
+  if (typeof value !== "string") return result
+  for (const entry of value.split(",")) {
+    const separator = entry.lastIndexOf(":")
+    const count = Number(entry.slice(separator + 1))
+    if (separator <= 0 || !Number.isInteger(count) || count <= 0) {
+      console.error(`--extra-bytes: expected <file>:<positive integer>, got "${entry}"`)
+      process.exit(2)
+    }
+    result.set(entry.slice(0, separator), count)
+  }
+  return result
+}
+
+function describeQaOptions() {
+  const lines = []
+  if (redirectMatch != null) lines.push(`redirect ${redirectMatch} -> ${redirectTo}<path> (${redirectStatus})`)
+  if (authMatch != null) lines.push(`basic auth qa:secret required for ${authMatch}`)
+  if (throttleBytesPerSecond > 0) lines.push(`throttle ${throttleBytesPerSecond / 1024} KiB/s`)
+  for (const [name, count] of extraBytes) lines.push(`${name}: ${count} extra bytes on a full GET`)
+  return lines
 }
 
 function listenUrls(bindHost, bindPort) {
@@ -198,8 +272,39 @@ function contentType(filePath) {
   return "application/octet-stream"
 }
 
-// Serves a whole file (200) or byte ranges (206 single / multipart). Records the body size in counter.bytes before streaming.
-async function serveFile(req, res, filePath, stat, rangeHeader, counter) {
+// Counts the body bytes handed to the response (counter.bytes) and, with --throttle-kbps, paces them.
+function meter(counter) {
+  return new Transform({
+    transform(chunk, _encoding, callback) {
+      counter.bytes += chunk.length
+      if (throttleBytesPerSecond > 0) {
+        setTimeout(() => callback(null, chunk), (chunk.length / throttleBytesPerSecond) * 1000)
+      } else {
+        callback(null, chunk)
+      }
+    },
+  })
+}
+
+// One body stream per response (piped into it once): writing parts through several pipeline() calls stacks
+// listeners on the response, one set per part, and a differential download asks for up to 200 ranges at a time.
+async function* fileThenZeros(filePath, extra) {
+  yield* fs.createReadStream(filePath)
+  for (let left = extra; left > 0; left -= 64 * 1024) {
+    yield Buffer.alloc(Math.min(64 * 1024, left))
+  }
+}
+
+async function* multipartBody(filePath, parts, trailer) {
+  for (const part of parts) {
+    yield Buffer.from(part.header)
+    yield* fs.createReadStream(filePath, { start: part.start, end: part.end })
+  }
+  yield Buffer.from(trailer)
+}
+
+// Serves a whole file (200) or byte ranges (206 single / multipart). counter.bytes counts what was actually sent.
+async function serveFile(req, res, filePath, stat, rangeHeader, counter, extra) {
   const size = stat.size
   const type = contentType(filePath)
   res.setHeader("Accept-Ranges", "bytes")
@@ -208,13 +313,12 @@ async function serveFile(req, res, filePath, stat, rangeHeader, counter) {
   res.setHeader("Cache-Control", "no-cache")
 
   if (!rangeHeader) {
-    res.writeHead(200, { "Content-Length": size, "Content-Type": type })
+    res.writeHead(200, { "Content-Length": size + extra, "Content-Type": type })
     if (req.method === "HEAD") {
       res.end()
       return
     }
-    counter.bytes = size
-    await pipeline(fs.createReadStream(filePath), res)
+    await pipeline(Readable.from(fileThenZeros(filePath, extra)), meter(counter), res)
     return
   }
 
@@ -232,8 +336,7 @@ async function serveFile(req, res, filePath, stat, rangeHeader, counter) {
       res.end()
       return
     }
-    counter.bytes = end - start + 1
-    await pipeline(fs.createReadStream(filePath, { start, end }), res)
+    await pipeline(fs.createReadStream(filePath, { start, end }), meter(counter), res)
     return
   }
 
@@ -250,12 +353,7 @@ async function serveFile(req, res, filePath, stat, rangeHeader, counter) {
     res.end()
     return
   }
-  counter.bytes = contentLength
-  for (const part of parts) {
-    res.write(part.header)
-    await pipeline(fs.createReadStream(filePath, { start: part.start, end: part.end }), res, { end: false })
-  }
-  res.end(trailer)
+  await pipeline(Readable.from(multipartBody(filePath, parts, trailer)), meter(counter), res)
 }
 
 function parseByteRanges(header, size) {
