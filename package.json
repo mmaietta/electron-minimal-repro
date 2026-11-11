@@ -1,7 +1,7 @@
 {
   "name": "autoupdate-proto",
   "productName": "AutoUpdateProto",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Barebones electron-builder v27 / electron-updater v7 auto-update prototype",
   "main": "main.js",
   "author": "Mike Maietta",
@@ -26,5 +26,17 @@
   "devDependencies": {
     "electron": "^44.0.0",
     "electron-builder": "27.0.0-alpha.8"
+  },
+  "pnpm": {
+    "overrides": {
+      "electron-builder": "link:../electron-builder-5/packages/electron-builder",
+      "app-builder-lib": "link:../electron-builder-5/packages/app-builder-lib",
+      "builder-util": "link:../electron-builder-5/packages/builder-util",
+      "builder-util-runtime": "link:../electron-builder-5/packages/builder-util-runtime",
+      "electron-publish": "link:../electron-builder-5/packages/electron-publish",
+      "dmg-builder": "link:../electron-builder-5/packages/dmg-builder",
+      "electron-builder-squirrel-windows": "link:../electron-builder-5/packages/electron-builder-squirrel-windows",
+      "electron-updater": "link:../electron-builder-5/packages/electron-updater"
+    }
   }
 }

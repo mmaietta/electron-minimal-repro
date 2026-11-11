@@ -62,6 +62,7 @@ autoUpdater.forceDevUpdateConfig = !app.isPackaged
 // v7: autoInstallOnAppQuit is gone; autoInstallEvent is "onQuit" (default) | "onNextLaunch" | "manual".
 // Kept at the default here; the three buttons change it right before quitting.
 autoUpdater.autoInstallEvent = "onQuit"
+autoUpdater.crossOriginHeaders = (headers) => headers
 
 // Every event in AppUpdaterEvents (electron-updater/src/AppUpdater.ts) plus the legacy UpdaterEvents union.
 const UPDATER_EVENTS = [

@@ -1,6 +1,9 @@
 // electron-builder v27 configuration (CommonJS). Discovered automatically: v27 looks for
 // electron-builder.{yml,yaml,json,json5,toml,js,cjs,ts} (app-builder-lib/src/util/config/load.ts findAndReadConfig).
 // A JS file is used so the update-server URL and channel can come from the environment at release time
+
+const { ALLOW_EXTERNAL_LINKS_OPTION } = require("../electron-builder-5/packages/builder-util/dist/pathContainment")
+
 // (scripts/release.mjs sets them).
 const url = process.env.UPDATE_SERVER_URL || "http://127.0.0.1:8080/"
 const channel = process.env.UPDATE_CHANNEL || "latest"
@@ -9,11 +12,17 @@ const channel = process.env.UPDATE_CHANNEL || "latest"
 module.exports = {
   appId: "com.mmaietta.autoupdate-proto",
   productName: "AutoUpdateProto",
+  // toolsets: {
+  //   wine: "system",
+  // },
   directories: {
     output: "dist",
     buildResources: "build", // build/electron-publisher-custom.js lives here (PublishManager.requireProviderClass)
   },
-  files: ["main.js", "preload.js", "renderer.js", "index.html", "styles.css"],
+  fileOptions: {
+    files: ["main.js", "preload.js", "renderer.js", "index.html", "styles.css"],
+    allowExternalLinks: true
+  },
   // v27: root `npmRebuild` moved under `nativeModules` (website/docs/migration/v27-breaking-changes.md).
   nativeModules: { npmRebuild: false },
   // latest -> also writes alpha*.yml + beta*.yml; beta -> also alpha*.yml (updateInfoBuilder.computeChannelNames)
@@ -41,7 +50,7 @@ module.exports = {
     },
   },
   win: {
-    target: ["nsis"],
+    target: ["squirrel"],
   },
   nsis: {
     oneClick: true,
