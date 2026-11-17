@@ -90,7 +90,16 @@ if (QA.QA_AUTH === "1") {
   autoUpdater.requestHeaders = { "x-qa-tenant": "t1" }
   autoUpdater.addAuthHeader("Bearer QA-SECRET-TOKEN")
 }
-if (QA.QA_MAX_UPDATE_INFO_SIZE) autoUpdater.maxUpdateInfoSize = Number(QA.QA_MAX_UPDATE_INFO_SIZE)
+// the setter validates (ERR_UPDATER_INVALID_MAX_UPDATE_INFO_SIZE): keep the app alive and report it, so D9 can see it
+let qaStartupError = null
+if (QA.QA_MAX_UPDATE_INFO_SIZE) {
+  try {
+    autoUpdater.maxUpdateInfoSize = Number(QA.QA_MAX_UPDATE_INFO_SIZE)
+  } catch (e) {
+    qaStartupError = e
+    logger.error(`[qa] autoUpdater.maxUpdateInfoSize = ${QA.QA_MAX_UPDATE_INFO_SIZE} threw ${e.code}: ${e.message}`)
+  }
+}
 // NsisUpdater only (Windows); a harmless extra property elsewhere
 if (QA.QA_PUBLISHER_NAME) autoUpdater.publisherName = QA.QA_PUBLISHER_NAME
 if (QA.QA_INSTALL_DIR) autoUpdater.installDirectory = QA.QA_INSTALL_DIR
@@ -401,8 +410,10 @@ function createWindow() {
 app.whenReady().then(async () => {
   createWindow()
 
-  // QA_AUTO_CHECK=1: check for updates as soon as the window has loaded (saves a click per relaunch)
-  if (QA.QA_AUTO_CHECK === "1") {
+  if (qaStartupError != null) {
+    qaDone(`error ${qaStartupError.code ?? ""}`.trim())
+  } else if (QA.QA_AUTO_CHECK === "1") {
+    // QA_AUTO_CHECK=1: check for updates as soon as the window has loaded (saves a click per relaunch)
     mainWindow.webContents.once("did-finish-load", async () => {
       const response = await checkForUpdates()
       const summary = response.ok
