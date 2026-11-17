@@ -1,12 +1,14 @@
 # QA test plan: electron-updater 7.0.0-alpha.14 + electron-builder 27.0.0-alpha.15
 
-**Under test:** release commit `8a9b848f8` (`changeset-release/master` in `../electron-builder-5`), linked into this app through `pnpm.overrides`. These versions are not on npm yet.
+**Under test:** release commit `f4df97d1c` (`changeset-release/master` in `../electron-builder-5`), linked into this app through `pnpm.overrides`. These versions are not on npm yet.
 
-The audit started on `09e5e383d`. When #10603 merged, the release PR was regenerated as `8a9b848f8`. Between the two, the only shipped-code changes are:
-- the `ERR_HTTP_RESPONSE_TOO_LARGE` message now links `#channel-files-are-limited-to-10-mib`;
-- `migrate-schema` rewrites a `toolsets.appimage: "1.2.0"` pin to `"1.2.1"`.
+The audit started on `09e5e383d`, and the release PR has been regenerated twice since:
+- **`8a9b848f8`, after #10603.** The only shipped-code changes: the `ERR_HTTP_RESPONSE_TOO_LARGE` message now links `#channel-files-are-limited-to-10-mib`, and `migrate-schema` rewrites a `toolsets.appimage: "1.2.0"` pin to `"1.2.1"`.
+- **`f4df97d1c`, after #10605 and #10620.**
+  - #10605 fixes F1: a failed download is now reported only once its destination file is closed.
+  - #10620 adds the v27 runtime e2e cases, which also cover F3 and F4.
 
-The rest is docs, changesets and `scheme.json` descriptions.
+**Running it:** `qa/run/*.mjs` automates these checks and QA_MANUAL.md has the steps. This file stays the reference for what each check proves.
 
 **Time:** about 35 checks in 6 sessions, roughly 5.5 h. Builds happen once, in session B, all on the Mac.
 
@@ -122,7 +124,7 @@ export ELECTRON_BUILDER_UPDATE_SIGN_KEY_FILE=$PWD/keys/update-private-key.pem   
   pnpm release --version 1.0.0 --win --publish   2>&1 | tee qa-logs/b1-win.log     # add --x64 for an x64 VM
   pnpm release --version 1.0.0 --linux --publish 2>&1 | tee qa-logs/b1-linux.log   # AppImage + deb
   unset ELECTRON_BUILDER_CACHE && node scripts/qa.mjs stash v1.0.0
-  grep -ho "using toolset.*" qa-logs/b1-*.log | sort -u
+  grep -hoE "downloading.*label=[^ ]+" qa-logs/b1-*.log | sort -u; find "$ELECTRON_BUILDER_CACHE" -maxdepth 3   # toolset downloads and the cold cache
   grep -hiE "crossOriginHeaders|plain http" qa-logs/b1-*.log      # expect nothing
   grep -A3 updateManifestPublicKey dist/mac-*/AutoUpdateProto.app/Contents/Resources/app-update.yml
   grep -A1 publisherName dist/win-*unpacked/resources/app-update.yml
@@ -130,7 +132,7 @@ export ELECTRON_BUILDER_UPDATE_SIGN_KEY_FILE=$PWD/keys/update-private-key.pem   
   ```
   Pass when all of these hold:
   - The banner shows `version=27.0.0-alpha.15`.
-  - Toolsets in use: `7zip@1.1.0`, `dmg-builder@1.2.7`, `nsis@2.0.4`, `win-codesign@1.3.3`, `appimage@1.2.1`, `fpm@2.3.1`, `archive@1.0.0`.
+  - Toolsets downloaded into the cold cache, as shown by the download labels and cache paths (there is no "using toolset" log line): `7zip@1.1.0`, `dmg-builder@1.2.7`, `nsis@2.0.4`, `win-codesign@1.3.3`, `appimage@1.2.1`, `fpm@2.3.1`, `archive@1.0.0`.
   - No cross-origin or plain-http warning.
   - The public key is in the mac `app-update.yml`, and `publisherName: - CN=…` is in the win one.
   - codesign is OK.
@@ -398,14 +400,14 @@ Before starting: socat forwarding is up (S5), and the Mac's `server/updates` hol
 
 These came from the audit of the source at `09e5e383d`, re-checked against `8a9b848f8`. "Fixed by #10603" means it was fixed by the now-merged PR.
 
-- **F1 — #10580 can leave `temp-*` in `pending/` after the size-cap abort** (high)
+- **F1 — #10580 can leave `temp-*` in `pending/` after the size-cap abort** (high; **fixed by #10605**, in `f4df97d1c`)
   - Seen on master `c8c7cafaa`: `downloadSizeLimitTest.ts:196 › the installer` failed with `expected [ 'temp-TestApp-Setup-1.1.0.exe' ] to deeply equal []`, while the previous run passed.
   - Suspected cause: `configurePipes` opens the `createWriteStream` asynchronously. When the limit trips on the first chunk, the callback runs before the file exists, so `removeFileIfAny()` empties `pending/` and the late open then creates the temp file.
   - On Windows, unlinking a file that is still open can fail as well.
   - D13 checks for it. A fix is on branch `fix/download-size-cap-temp-file`.
 - **F2 — doc: next-launch version mismatch error code** (medium). `v27-runtime-changes.md#nsis-update-installers-must-carry-the-updates-version` says a mismatch at the next launch fails with `ERR_UPDATER_INVALID_SIGNATURE`. `BaseUpdater.installPendingUpdate` dispatches `ERR_UPDATER_INSTALLER_VERSION_MISMATCH`, which nsisInstallerVersionTest and the commit message also expect.
-- **F3 — blackbox e2e: Parallels VM mode is broken by #10566** (medium). `runTestWithinServer` serves `http://<parallels-host-ip>`, which is not loopback, and the fixture sets no `allowInsecureFeed`, so every VM update launch fails with `ERR_UPDATER_INSECURE_FEED`. Fixed on the e2e branch.
-- **F4 — blackbox e2e never reaches Authenticode, `publisherName` or the ProductVersion check** (medium). Every served config is `{ verifyUpdateCodeSignature: false }`. Covered by the new NSIS e2e cases.
+- **F3 — blackbox e2e: Parallels VM mode is broken by #10566** (medium; **fixed by #10620**). `runTestWithinServer` serves `http://<parallels-host-ip>`, which is not loopback, and the fixture sets no `allowInsecureFeed`, so every VM update launch fails with `ERR_UPDATER_INSECURE_FEED`. Fixed on the e2e branch.
+- **F4 — blackbox e2e never reaches Authenticode, `publisherName` or the ProductVersion check** (medium; **fixed by #10620**). Every served config is `{ verifyUpdateCodeSignature: false }`. Covered by the new NSIS e2e cases.
 - **F5 — `sign-update-manifest` has no YAML-alias check** (medium)
   - `--verify` reports "verified" for a manifest that `electron-builder verify` fails for aliases.
   - Re-signing expands aliases silently (js-yaml dump with `noRefs`).
@@ -424,3 +426,14 @@ These came from the audit of the source at `09e5e383d`, re-checked against `8a9b
 - **F14 — docs** (low)
   - `auto-update.md#local-update-server` says an installed test build needs https, but a loopback port-forward also satisfies the code.
   - `migrate-schema` reads only literal `url` values in JS configs, so an env-driven URL gets no advisory.
+- **F15 — `electron-builder publish -f` fails for any config with a `publish` list** (medium; already in alpha.14, not a regression)
+  - `publishArtifactsWithOptions` loads the config, and `Packager.loadAndValidateConfig` loads the same file again with the first result as `configFromOptions`. The merge then breaks:
+    - a JS config is the same `require`d object both times, so `publish` ends up containing itself, and `getSafeEffectiveConfig` throws "Converting circular structure to JSON";
+    - JSON/YAML configs fail validation with "configuration.publish should be one of these: array | null | string".
+  - Repro: an empty project with `publish: [{ provider: "generic", url }]` and `electron-builder publish -f any.txt`. It fails on published 27.0.0-alpha.14 and on `f4df97d1c` alike.
+  - It also means the #10582 pre-upload warnings of `publish -f` (B6) cannot be seen for such projects.
+- **F17 — e2e: a registered Windows Parallels VM hijacks every local mac blackbox case** (low, pre-existing, test-only)
+  - `runUpdateScenario` (`test/src/updater/blackboxUpdateHelpers.ts`) passes the detected Windows VM to `handleInitialInstallPerOS`, `runTestWithinServer` and the scenario for every target, not only `nsis`.
+  - `getWindowsVm` also starts a stopped or suspended VM.
+  - So with any Windows VM in Parallels, the mac cases launch `TestApp.app` inside Windows through `prlctl exec … powershell` and fail. Seen locally for "arm64 - update request rules"; CI has no VM and is unaffected.
+  - Fix: `const vm = target === "nsis" ? await windowsVmPromise : undefined`.

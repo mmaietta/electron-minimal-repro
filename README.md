@@ -185,6 +185,27 @@ toolchain); `--x64` / `--arm64` pick the arch (the default is the host's). Linux
 - `QA_*` build knobs in `electron-builder.js` (Windows targets, nsis-web, NSIS debug logging, blockmap format, scan probe).
 - `node scripts/qa.mjs`: manifest stash/serve, generated QA manifests, cache seeding, dev-mode manifest key.
 
+### Running the QA scripts
+
+`qa/run/` runs the plan without clicks. `QA_MANUAL.md` has the one-time setup, the order, and the few steps that need a person.
+
+| Script | Covers |
+|---|---|
+| `setup.mjs` | S1–S5: compile the linked checkout, CI gate, VM port-forwards |
+| `session-b.mjs` | B1–B6: builds (mac + arm64 win/linux), build warnings, `sign-update-manifest`, `verify`, `publish -f`, `migrate-schema` |
+| `session-d.mjs` | D1–D15: dev mode against two local origins |
+| `session-m.mjs` | M1–M2: the packaged mac app and a real Squirrel.Mac update |
+| `session-w.mjs` | W0–W9: the Windows VM, driven from the Mac with `prlctl exec` |
+| `session-l.mjs` | L1–L3: the Ubuntu VM, the same way |
+| `e2e.mjs` | E1–E6: the #10620 e2e cases, in CI and locally |
+| `all.mjs` | all of them in order |
+
+Every script takes `--list` and `--only <ids>`, and writes `qa-logs/results-*.json`.
+
+The app takes two toggles for unattended runs:
+- `QA_AFTER_DOWNLOAD=skip|on-quit|next-launch` does what that install button does once the update is downloaded.
+- `QA_EXIT_WHEN_DONE=1` quits once the check has settled, after logging `[qa] done: <reason>`.
+
 ## How publishing is wired
 
 ```js
