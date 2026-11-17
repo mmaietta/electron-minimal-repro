@@ -302,7 +302,10 @@ async function checkForUpdates() {
   }
 }
 
-ipcMain.handle("updater:install", (_event, mode) => {
+ipcMain.handle("updater:install", (_event, mode) => install(mode))
+
+// The three install buttons, and QA_AFTER_DOWNLOAD once an update is downloaded.
+function install(mode) {
   logger.info(`install mode chosen: ${mode}`)
   switch (mode) {
     case "on-quit":
@@ -335,7 +338,51 @@ ipcMain.handle("updater:install", (_event, mode) => {
     default:
       return { mode, error: `unknown install mode "${mode}"` }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Unattended runs (qa/run/*.mjs): no clicks and no window to close.
+//   QA_AFTER_DOWNLOAD=skip|on-quit|next-launch  on update-downloaded, do what that button does
+//   QA_EXIT_WHEN_DONE=1                          quit once the check has settled (error, not available, cancelled,
+//                                                downloaded, updater inactive); "[qa] done: <reason>" marks the end
+//   QA_EXIT_AFTER_MS                             with QA_EXIT_WHEN_DONE: quit after this long regardless (default 120000)
+// A packaged app with an update downloaded installs on quit (autoInstallEvent "onQuit"), so packaged runs that only
+// want to look should set QA_AFTER_DOWNLOAD=skip.
+// ---------------------------------------------------------------------------
+const AFTER_DOWNLOAD_MODES = { skip: "skip", "on-quit": "on-quit", "next-launch": "next-launch" }
+let doneReported = false
+function qaDone(reason) {
+  if (doneReported) return
+  doneReported = true
+  logger.info(`[qa] done: ${reason}`)
+  if (QA.QA_EXIT_WHEN_DONE === "1") {
+    setTimeout(() => app.quit(), 1000)
+  }
+}
+if (QA.QA_AFTER_DOWNLOAD != null && AFTER_DOWNLOAD_MODES[QA.QA_AFTER_DOWNLOAD] == null) {
+  logger.warn(`[qa] QA_AFTER_DOWNLOAD=${QA.QA_AFTER_DOWNLOAD} is not one of ${Object.keys(AFTER_DOWNLOAD_MODES).join(", ")}; ignored`)
+}
+autoUpdater.on("update-downloaded", () => {
+  const mode = AFTER_DOWNLOAD_MODES[QA.QA_AFTER_DOWNLOAD]
+  if (mode == null) {
+    qaDone("update-downloaded")
+    return
+  }
+  // reported first: install() quits the app itself
+  doneReported = true
+  logger.info(`[qa] done: update-downloaded -> ${mode}`)
+  install(mode)
 })
+autoUpdater.on("update-not-available", () => qaDone("update-not-available"))
+autoUpdater.on("update-cancelled", () => qaDone("update-cancelled"))
+autoUpdater.on("error", error => qaDone(`error ${error?.code ?? ""}`.trim()))
+if (QA.QA_EXIT_WHEN_DONE === "1") {
+  const ms = Number(QA.QA_EXIT_AFTER_MS || 120000)
+  setTimeout(() => {
+    logger.info(`[qa] exit: timeout after ${ms} ms`)
+    app.quit()
+  }, ms).unref()
+}
 
 // ---------------------------------------------------------------------------
 // Window
@@ -362,6 +409,9 @@ app.whenReady().then(async () => {
         ? { ok: true, isUpdateAvailable: response.result?.isUpdateAvailable ?? null, version: response.result?.updateInfo?.version ?? null }
         : { ok: false, code: response.error?.code ?? null }
       logger.info(`[qa] QA_AUTO_CHECK -> ${JSON.stringify(summary)}`)
+      // the events above settle a check; these two outcomes emit none of them
+      if (response.ok && response.result == null) qaDone("updater inactive")
+      else if (!response.ok) qaDone(`check failed ${response.error?.code ?? ""}`.trim())
     })
   }
 
