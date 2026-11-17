@@ -379,6 +379,16 @@ autoUpdater.on("update-downloaded", () => {
   }
   // reported first: install() quits the app itself
   doneReported = true
+  // MacUpdater emits update-downloaded once its proxy serves the zip, before Squirrel.Mac has fetched it: quitting then
+  // would leave nothing staged. Wait for Squirrel's own update-downloaded, as a person would before clicking.
+  if (process.platform === "darwin" && app.isPackaged && mode !== "skip") {
+    logger.info(`[qa] update-downloaded: waiting for Squirrel.Mac before ${mode}`)
+    require("electron").autoUpdater.once("update-downloaded", () => {
+      logger.info(`[qa] done: update-downloaded -> ${mode}`)
+      install(mode)
+    })
+    return
+  }
   logger.info(`[qa] done: update-downloaded -> ${mode}`)
   install(mode)
 })

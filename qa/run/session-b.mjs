@@ -123,7 +123,7 @@ session.check("B1", "cold-cache 1.0.0 builds: toolsets, no warnings, update conf
     ([name]) =>
       !(/dmg/.test(name) && !SELECTED.has("mac")) &&
       !(/nsis|code-\?sign/.test(name) && !SELECTED.has("win")) &&
-      !(/appimage|fpm/.test(name) && !SELECTED.has("linux")),
+      !(/appimage|fpm|archive/.test(name) && !SELECTED.has("linux")),
   )
   for (const [name, version] of wanted) {
     t.ok(
@@ -188,19 +188,20 @@ session.check("B3", "extra builds: offline Windows signing, log-enabled NSIS stu
     qa("manifests")
     qa("serve", "v1.0.1")
   }
-  const winLog = readLog("b3-win")
-  if (winLog == null) {
+  const winLog = SELECTED.has("win") ? readLog("b3-win") : null
+  if (SELECTED.has("win") && winLog == null) {
     t.skip("no qa-logs/b3-win.log from an earlier run")
     return
   }
-  t.count(winLog, "ELECTRON_BUILDER_OFFLINE is set, so Windows signatures get no timestamp", 1, "one offline-signing (no timestamp) warning")
-  t.ok(magic(firstMatch(updatesDir, /^AutoUpdateProto-1\.1\.0-.*mac\.zip\.blockmap$/), 2) === "1F8B", "the 1.1.0 blockmap is v2 (gzip, 1f8b)")
+  if (winLog != null) t.count(winLog, "ELECTRON_BUILDER_OFFLINE is set, so Windows signatures get no timestamp", 1, "one offline-signing (no timestamp) warning")
+  if (SELECTED.has("mac")) t.ok(magic(firstMatch(updatesDir, /^AutoUpdateProto-1\.1\.0-.*mac\.zip\.blockmap$/), 2) === "1F8B", "the 1.1.0 blockmap is v2 (gzip, 1f8b)")
   t.ok(
     magic(firstMatch(updatesDir, /^AutoUpdateProto-1\.0\.1-.*mac\.zip\.blockmap$/), 4) === Buffer.from("EBB3").toString("hex").toUpperCase(),
     'the 1.0.1 blockmap is v3 (ASCII magic "EBB3")',
   )
   const stashes = /stashes: (.*)/.exec(qa("status").stdout)?.[1] ?? ""
-  for (const name of ["v1.0.0", "v1.0.1", "win-1.0.2", "win-1.0.2-web", "mac-1.1.0", "win-forged-1.0.2", "win-web-wrong-arch"])
+  const expected = ["v1.0.0", "v1.0.1", ...(SELECTED.has("win") ? ["win-1.0.2", "win-1.0.2-web", "win-forged-1.0.2", "win-web-wrong-arch"] : []), ...(SELECTED.has("mac") ? ["mac-1.1.0"] : [])]
+  for (const name of expected)
     t.ok(stashes.split(", ").includes(name), `stash ${name} exists`, [stashes])
 })
 

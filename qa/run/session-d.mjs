@@ -312,7 +312,9 @@ session.check("D12", "switching the blockmap format (#10497)", async t => {
       qa("cache", "seed", "1.1.0", "--blockmap")
       qa("cache", "corrupt-v2")
       const r = await launch(t, "corrupt-v2", { QA_CHANNEL: "latest" }, {}, { clearCache: false })
-      t.count(r.out, "ERR_UPDATER_BLOCKMAP_FORMAT_CHANGED", 1, "corrupt v2: ERR_UPDATER_BLOCKMAP_FORMAT_CHANGED logged once")
+      // ERR_UPDATER_BLOCKMAP_FORMAT_CHANGED is caught and logged once at info as its message, without the code
+      t.count(r.out, "Block map format changed (old: v2, new: v3) and the old v2 map cannot be compared with a v3 map", 1, "corrupt v2: the format-change error is logged once")
+      t.has(r.out, "downloading this update in full", "corrupt v2: it says it downloads in full")
       t.has(r.out, doneDownloaded, "corrupt v2: falls back to a full download")
     }
   } finally {
