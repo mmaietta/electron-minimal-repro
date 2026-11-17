@@ -11,7 +11,13 @@ export const projectDir = path.resolve(path.dirname(fileURLToPath(import.meta.ur
 export const builderDir = path.resolve(process.env.QA_BUILDER_DIR ?? path.join(projectDir, "..", "electron-builder-5"))
 export const logsDir = path.join(projectDir, "qa-logs")
 export const updatesDir = path.join(projectDir, "server", "updates")
-export const electronBin = path.join(projectDir, "node_modules", ".bin", "electron")
+// the Electron binary itself, not node_modules/.bin/electron: that wrapper is a Node process, and killing it on a
+// timeout would leave the app running
+export const electronBin = (() => {
+  const pathFile = path.join(projectDir, "node_modules", "electron", "path.txt")
+  const relative = fs.existsSync(pathFile) ? fs.readFileSync(pathFile, "utf8").trim() : "Electron.app/Contents/MacOS/Electron"
+  return path.join(projectDir, "node_modules", "electron", "dist", relative)
+})()
 export const macAppPath = "/Applications/AutoUpdateProto.app"
 // <userData>/updater-qa.log of the app (dev and packaged share it: both are named AutoUpdateProto)
 export const macQaLog = path.join(os.homedir(), "Library", "Application Support", "AutoUpdateProto", "updater-qa.log")
@@ -38,7 +44,9 @@ export function sh(command, args = [], options = {}) {
     env: options.env ?? cleanEnv(),
     encoding: "utf8",
     maxBuffer: 256 * 1024 * 1024,
-    timeout: options.timeoutMs,
+    // nothing a runner calls should take longer; a hang becomes a failed check instead of a stuck session
+    timeout: options.timeoutMs ?? 20 * 60_000,
+    killSignal: "SIGKILL",
     input: options.input,
   })
   const stdout = result.stdout ?? ""
@@ -201,7 +209,13 @@ export async function launchApp(env = {}, { exe = electronBin, args = ["."], tim
     timedOut = true
     child.kill("SIGKILL")
   }, timeoutMs)
-  const code = await new Promise(resolve => child.once("exit", c => resolve(c)))
+  const code = await new Promise(resolve => {
+    child.once("exit", c => resolve(c))
+    child.once("error", error => {
+      stdout += `\n[qa-run] could not start ${exe}: ${error.message}\n`
+      resolve(127)
+    })
+  })
   clearTimeout(timer)
   const log = readFrom(logFile, offset)
   return { code, stdout, log, text: `${stdout}\n${log}`, ms: Date.now() - started, timedOut }
@@ -333,9 +347,16 @@ export function createSession(name, title) {
       console.log(`\n=== Session ${name}: ${title} (${selected.length} checks) ===`)
       const results = []
       let restoreError = null
+      let preflightError = null
       try {
-        if (preflight != null) await preflight(options)
-        for (const check of selected) {
+        if (preflight != null) {
+          try {
+            await preflight(options)
+          } catch (error) {
+            preflightError = error
+          }
+        }
+        for (const check of preflightError == null ? selected : []) {
           const t = new CheckContext(check.id, name)
           const started = Date.now()
           process.stdout.write(`--- ${check.id} ${check.title} ... `)
@@ -368,12 +389,13 @@ export function createSession(name, title) {
       const stamp = new Date().toISOString().replace(/[:.]/g, "-")
       fs.mkdirSync(logsDir, { recursive: true })
       const reportFile = path.join(logsDir, `results-${name}-${stamp}.json`)
-      fs.writeFileSync(reportFile, JSON.stringify({ session: name, title, builderHead: builderHead(), results }, null, 2))
+      fs.writeFileSync(reportFile, JSON.stringify({ session: name, title, builderHead: builderHead(), preflightError: preflightError?.message ?? null, results }, null, 2))
+      if (preflightError != null) console.error(`\nSession ${name} did not start: ${preflightError.message}`)
       const counts = {}
       for (const result of results) counts[result.status] = (counts[result.status] ?? 0) + 1
       console.log(`\nSession ${name}: ${Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(", ") || "nothing run"}`)
       console.log(`report: ${path.relative(projectDir, reportFile)}`)
-      process.exitCode = results.some(it => it.status === "FAIL") || restoreError != null ? 1 : 0
+      process.exitCode = results.some(it => it.status === "FAIL") || restoreError != null || preflightError != null ? 1 : 0
     },
   }
 }
@@ -422,4 +444,16 @@ export function harnessRestorer() {
 
 export function stashExists(name) {
   return fs.existsSync(path.join(updatesDir, "stash", name))
+}
+
+// A packaged build carries the main.js it was built from: sessions M, W and L need builds made after main.js last
+// changed (the QA_AFTER_DOWNLOAD / QA_EXIT_WHEN_DONE toggles they depend on). Throws with the files that are older.
+export function requireBuildsNewerThanMainJs(pattern, platform) {
+  const mainTime = fs.statSync(path.join(projectDir, "main.js")).mtimeMs
+  const files = fs.existsSync(updatesDir) ? fs.readdirSync(updatesDir).filter(it => pattern.test(it)) : []
+  if (files.length === 0) throw new Error(`no ${platform} build in server/updates: run  QA_PLATFORMS=${platform} node qa/run/session-b.mjs --only B1,B2,B3`)
+  const stale = files.filter(it => fs.statSync(path.join(updatesDir, it)).mtimeMs < mainTime)
+  if (stale.length > 0) {
+    throw new Error(`these ${platform} builds are older than main.js and lack its QA toggles: ${stale.join(", ")}\n  rebuild:  QA_PLATFORMS=${platform} node qa/run/session-b.mjs --only B1,B2,B3`)
+  }
 }

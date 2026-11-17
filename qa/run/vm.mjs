@@ -55,7 +55,10 @@ export function win(script, { system = false, timeoutMs = 600_000 } = {}) {
 }
 
 // The GUI session of the Ubuntu VM's user (uid 1000): Wayland, with XWayland on :0.
-const LINUX_GUI_ENV = "export XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-0 DISPLAY=:0 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus"
+// Electron uses X11 through XWayland there, which needs mutter's Xauthority file.
+const LINUX_GUI_ENV =
+  "export XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-0 DISPLAY=:0 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus\n" +
+  'export XAUTHORITY="$(ls /run/user/1000/.mutter-Xwaylandauth.* 2>/dev/null | head -1)"'
 
 // Runs a bash script in the Linux VM. { root } runs it as root, { gui } adds the desktop session's display variables.
 export function linux(script, { root = false, gui = false, timeoutMs = 600_000 } = {}) {
