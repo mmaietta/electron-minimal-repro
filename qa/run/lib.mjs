@@ -427,6 +427,8 @@ export async function requireFreePorts(ports) {
 }
 
 export function requirePreflight(problems) {
+  // the runners build the mac app and drive the VMs with prlctl: a run inside a VM finds neither (L2's password dialog appears in the VM, but the runner stays on the Mac)
+  if (process.platform !== "darwin") throw new Error(`run the QA scripts on the Mac, not in a VM (this is ${process.platform}): they drive the VMs with prlctl exec`)
   if (problems.length > 0) throw new Error(`preflight failed:\n  - ${problems.join("\n  - ")}`)
   console.log(`electron-builder checkout ${builderDir} at ${builderHead()}`)
 }

@@ -47,7 +47,7 @@ export WIN_CSC_LINK=<path to .pfx> WIN_CSC_KEY_PASSWORD=<password>              
 **P4. VMs.**
 - "Windows 11 (1)" and "Ubuntu 24.04 ARM64" are running, each with a user logged in to the desktop.
 - Other VM names: set `QA_WIN_VM` and `QA_LINUX_VM`.
-- The scripts drive the VMs with `prlctl exec`, so Parallels Tools must be running in both.
+- The scripts drive the VMs with `prlctl exec`, so Parallels Tools must be running in both. Run every command on the Mac, including sessions W and L: a clone of the harness inside a VM has no `../electron-builder-5` and no `prlctl`.
 - You need the Ubuntu user's password (`parallels`) for L2.
 
 **P5. Docker Desktop**, only for E6 (AppImage e2e). Start it before `node qa/run/e2e.mjs --only E6`.
@@ -94,7 +94,7 @@ While `session-m.mjs` runs, nothing should appear on screen except the app's win
 
 ### L2 — the polkit password
 
-`session-l.mjs` prints `>>> L2 default: a polkit password dialog will appear …` twice.
+Run `session-l.mjs` on the Mac. It prints `>>> L2 default: a polkit password dialog will appear …` twice, and the dialog appears in the VM.
 1. Switch to the Ubuntu VM window. A polkit dialog asks for authentication to run `apt`/`dpkg`. **Pass:** the dialog shows the command it runs.
 2. Type the password of user `parallels` and click Authenticate. The runner waits up to 5 minutes for 1.0.1 to be installed.
 3. Repeat for the second run (`unverified-0`).
