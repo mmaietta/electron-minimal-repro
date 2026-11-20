@@ -76,8 +76,9 @@ session.check("L1", "AppImage: install at next launch with the default event (#1
   const install = launch(t, "relaunch", path, { QA_EXPLICIT_PENDING: "0", QA_AUTO_CHECK: "0" }, { timeoutMs: 120_000 })
   t.has(install.out, /Executing: .*AppImage/, "the updater replaces the AppImage at launch")
   t.none(install.out, "installPendingUpdateIfAvailable() on launch ->", "installed by the updater itself, not by the explicit call")
-  // the AppImage it left in place (same path, or renamed after the new version) must be 1.0.1
-  linux("sleep 15; pkill -f AutoUpdateProto || true")
+  // the AppImage it left in place (same path, or renamed after the new version) must be 1.0.1. The updater started it
+  // with this launch's QA_EXIT_AFTER_MS; extracted (APPIMAGE_EXTRACT_AND_RUN) it runs as …/autoupdate-proto
+  linux("sleep 15; pkill -i -f autoupdate || true")
   const current = linux(`ls -t ${WORK}/*.AppImage | head -1`).out.trim()
   const after = launch(t, "after", bq(current), { QA_AFTER_DOWNLOAD: "skip" })
   t.has(after.out, "Update for version 1.0.1 is not available (latest version: 1.0.1", `1.0.1 runs after the install (${current.split("/").pop()})`)
@@ -109,7 +110,7 @@ session.check("L3", "unsafe installer path with gksudo (#10524)", async t => {
   const cache = "/tmp/qa o'brien"
   try {
     linux(`mv /usr/bin/pkexec /usr/bin/pkexec.off
-printf '#!/bin/sh\\ntouch /tmp/gksudo-ran\\nexit 1\\n' > /usr/local/bin/gksudo && chmod +x /usr/local/bin/gksudo
+printf '#!/bin/sh\\ntouch /tmp/gksudo-ran\\nexit 1\\n' > /usr/local/bin/gksudo && chmod 755 /usr/local/bin/gksudo
 rm -f /tmp/gksudo-ran`, { root: true })
     const r = launch(t, "unsafe-path", DEB_APP, { XDG_CACHE_HOME: cache, QA_AFTER_DOWNLOAD: "on-quit" })
     t.has(r.out, "ERR_UPDATER_UNSAFE_INSTALLER_PATH", "ERR_UPDATER_UNSAFE_INSTALLER_PATH")

@@ -55,6 +55,7 @@ session.check("M1", "the packaged allowInsecureFeed warning (#10566)", async t =
   t.ok(installedVersion() === "1.0.0", `${dmg} is installed in /Applications (version ${installedVersion()})`)
   const r = await launch(t, "insecure-force", { QA_ALLOW_INSECURE: "force", QA_AUTO_INSTALL_EVENT: "manual", QA_AFTER_DOWNLOAD: "skip" })
   t.count(r.out, "autoUpdater.allowInsecureFeed is true in a packaged app", 1, "exactly one packaged-app allowInsecureFeed warning")
+  t.has(r.out, "v27-runtime-changes#update-requests-require-https", "the warning links the migration section (F7)")
   t.none(r.out, "nativeUpdater.update-downloaded", "with autoInstallEvent manual nothing is staged in Squirrel.Mac")
   t.ok(installedVersion() === "1.0.0", "the app is still 1.0.0")
   t.manual("confirm no Gatekeeper or keychain dialog appeared while the app ran (QA_MANUAL.md, M)")

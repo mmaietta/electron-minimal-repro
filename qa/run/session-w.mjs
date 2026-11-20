@@ -57,7 +57,11 @@ if (Test-Path $log) { $all = [IO.File]::ReadAllBytes($log); [Text.Encoding]::UTF
   return { out: result.out, requests: server.requests() }
 }
 
-const exeVersion = (exe = APP_EXE) => win(`if (Test-Path "${exe}") { (Get-Item "${exe}").VersionInfo.ProductVersion } else { "missing" }`).out.trim()
+// ProductVersion is four-part on Windows (1.0.1.0): compare it as the three-part app version
+const exeVersion = (exe = APP_EXE) =>
+  win(`if (Test-Path "${exe}") { (Get-Item "${exe}").VersionInfo.ProductVersion } else { "missing" }`)
+    .out.trim()
+    .replace(/^(\d+\.\d+\.\d+)\.0$/, "$1")
 const pendingFiles = () => win(`if (Test-Path "${PENDING}") { Get-ChildItem "${PENDING}" -Name } `).out.trim().split("\n").filter(Boolean)
 const clearPending = () => win(`Remove-Item -Recurse -Force "${PENDING}" -ErrorAction SilentlyContinue`)
 const readYml = () => win(`Get-Content -Raw "${APP_YML}"`).out
@@ -85,6 +89,22 @@ session.check("W0", "prep: Authenticode of the 1.0.1 installer, install 1.0.0, u
   t.has(sig.out, "status=Valid", "Get-AuthenticodeSignature reports Valid for the osslsigncode signature made on the Mac")
   certCn = /subject=(CN=[^,\n]+)/.exec(sig.out)?.[1] ?? null
   t.note(`signer: ${certCn ?? "(none)"}`)
+  // an install left by an earlier run: W7's 1.0.2 has a log-enabled uninstaller, and installing over it fails (F18).
+  // A plain uninstall (without --updated) works.
+  ps(
+    t,
+    "uninstall-earlier",
+    `Get-Process AutoUpdateProto -ErrorAction SilentlyContinue | Stop-Process -Force
+foreach ($d in "${INSTALL_DIR}", "${QA_APPS_DIR}") {
+  $u = Join-Path $d "Uninstall AutoUpdateProto.exe"
+  if (Test-Path $u) {
+    Start-Process -FilePath $u -ArgumentList "/S" -Wait
+    for ($i = 0; $i -lt 40 -and (Test-Path (Join-Path $d "AutoUpdateProto.exe")); $i++) { Start-Sleep -Seconds 2 }
+    "uninstalled " + $d
+  }
+  Remove-Item -Recurse -Force $d -ErrorAction SilentlyContinue
+}`,
+  )
   const install = ps(
     t,
     "install-1.0.0",
@@ -229,7 +249,6 @@ session.check("W7", "signed hop to 1.0.2 into a folder with a space (#10527 #105
   const reg = win(`Get-ChildItem HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall | ForEach-Object { Get-ItemProperty $_.PSPath } | Where-Object { $_.DisplayName -like "AutoUpdateProto*" } | ForEach-Object { "InstallLocation=[" + $_.InstallLocation + "]" }`).out
   t.has(reg, "InstallLocation=[", "the uninstall registry entry exists", reg.split("\n"))
   t.none(reg, /InstallLocation=\[[^\]\n]*"/, "InstallLocation has no stray quote (#10529)")
-  t.has(win(`Test-Path "${QA_APPS_DIR}\\install.log"`).out, "True", "install.log exists in the install dir (log-enabled stub, #10483)")
   win("Start-Sleep -Seconds 10; Get-Process AutoUpdateProto -ErrorAction SilentlyContinue | Stop-Process -Force")
 })
 
@@ -253,6 +272,36 @@ session.check("W9", "portable launcher quoting (#10591)", async t => {
   } finally {
     win(`Remove-Item -Force "$env:TEMP\\QA.exe" -ErrorAction SilentlyContinue`)
   }
+})
+
+session.check("W10", "reinstall over the log-enabled 1.0.2 install (#10483, F18 #10627, F19 #10628)", async t => {
+  const exe = `${QA_APPS_DIR}\\AutoUpdateProto.exe`
+  if (exeVersion(exe) !== "1.0.2") {
+    t.skip("needs the 1.0.2 install from W7")
+    return
+  }
+  const setup = winSetup("1.0.2")
+  const log = `${QA_APPS_DIR}\\install.log`
+  const r = ps(
+    t,
+    "reinstall",
+    `Get-Process AutoUpdateProto -ErrorAction SilentlyContinue | Stop-Process -Force
+"log-before=" + (Test-Path "${log}")
+${fetch(setup)}
+$p = Start-Process -FilePath (Join-Path ${WORK} ${psq(setup)}) -ArgumentList "/S" -PassThru
+$null = $p.Handle
+if ($p.WaitForExit(300000)) { "exit=" + $p.ExitCode } else { Stop-Process -Id $p.Id -Force; "exit=timeout" }
+Start-Sleep -Seconds 3
+Get-Process AutoUpdateProto -ErrorAction SilentlyContinue | Stop-Process -Force
+if (Test-Path "${log}") { Get-Content "${log}" -Encoding Unicode | Select-String "Can't rename" | Select-Object -Last 1 | ForEach-Object { "abort: " + $_.Line.Trim() } }`,
+    { timeoutMs: 420_000 },
+  )
+  // F19 (#10628): the installer starts logging once $INSTDIR is final, so W7's install wrote install.log there
+  t.has(r.out, "log-before=True", "W7's install wrote install.log in the install dir (F19)")
+  // F18 (#10627): the old log-enabled uninstaller logs to %TEMP%, so it no longer holds install.log open while it moves $INSTDIR aside
+  const exit = /exit=(\S+)/.exec(r.out)?.[1] ?? "?"
+  t.ok(exit === "0", `the reinstall over the log-enabled install exits 0 (F18; exit ${exit})`, /abort: .*/.exec(r.out) ?? [])
+  t.ok(exeVersion(exe) === "1.0.2", `1.0.2 is installed (${exeVersion(exe)})`)
 })
 
 // ---------------------------------------------------------------------------

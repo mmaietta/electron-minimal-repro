@@ -421,7 +421,8 @@ export function checkLinkedDist() {
 
 export async function requireFreePorts(ports) {
   for (const port of ports) {
-    if (!(await portFree(port))) throw new Error(`port ${port} is in use (stop the other update server first: pkill -f server/update-server.mjs)`)
+    // both: on macOS a probe on 127.0.0.1 still binds while another server holds 0.0.0.0 on the same port
+    if (!(await portFree(port)) || !(await portFree(port, "0.0.0.0"))) throw new Error(`port ${port} is in use (stop the other update server first: pkill -f server/update-server.mjs)`)
   }
 }
 

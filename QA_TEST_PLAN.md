@@ -1,12 +1,13 @@
 # QA test plan: electron-updater 7.0.0-alpha.14 + electron-builder 27.0.0-alpha.15
 
-**Under test:** release commit `f4df97d1c` (`changeset-release/master` in `../electron-builder-5`), linked into this app through `pnpm.overrides`. These versions are not on npm yet.
+**Under test:** release commit `a483c9a74` (`changeset-release/master` in `../electron-builder-5`, regenerated on 2026-11-20 on master `10f6f710a`, after the QA-findings fixes), linked into this app through `pnpm.overrides`. These versions are not on npm yet.
 
 The audit started on `09e5e383d`, and the release PR has been regenerated twice since:
 - **`8a9b848f8`, after #10603.** The only shipped-code changes: the `ERR_HTTP_RESPONSE_TOO_LARGE` message now links `#channel-files-are-limited-to-10-mib`, and `migrate-schema` rewrites a `toolsets.appimage: "1.2.0"` pin to `"1.2.1"`.
 - **`f4df97d1c`, after #10605 and #10620.**
   - #10605 fixes F1: a failed download is now reported only once its destination file is closed.
   - #10620 adds the v27 runtime e2e cases, which also cover F3 and F4.
+- **`a483c9a74` (master `10f6f710a` + version bumps), after the QA-findings fixes (#10627–#10641).** Test the release commit, not master: master's electron-updater is still `7.0.0-alpha.13`, below the version gate of the missing-crossOriginHeaders build warning, so B4 fails there. F2, F5–F10, F12–F14 and F17–F19 are fixed; F15 (#10630) is still open. The runners now assert the fixed behavior where a check reaches it: D9 (F10), D7 and M1 (F7), B2 (F13), B6 (F5; F15 fails until #10630 merges), W10 (F18, F19), E4 (F17), and E5 runs the new `blackboxNsisDebugLogging` case.
 
 **Running it:** `qa/run/*.mjs` automates these checks and QA_MANUAL.md has the steps. This file stays the reference for what each check proves.
 
@@ -237,8 +238,8 @@ export ELECTRON_BUILDER_UPDATE_SIGN_KEY_FILE=$PWD/keys/update-private-key.pem   
   - **A with `--auth '\.yml$'`,** launched with `QA_FEED=http://qa.localhost:8080/ QA_ALLOW_INSECURE=dev` → no login event at all; the challenge is cancelled.
 - [ ] **D8. YAML alias budget** (#10514 #10536 #10575 #10522). Launch with `QA_CHANNEL=qa-alias-ok`, then with `QA_CHANNEL=qa-alias-bomb`.
   - Pass: ok loads normally. bomb gives `ERR_UPDATER_INVALID_UPDATE_INFO` in milliseconds ("YAML aliases expand to more than 100000 …", `#update-manifest-yaml-aliases-are-limited`), and the window stays responsive.
-- [ ] **D9. Channel-file size limit** (#10508). Launch with `QA_MAX_UPDATE_INFO_SIZE=1024`, then `-1`, then `0`.
-  - Pass: `ERR_HTTP_RESPONSE_TOO_LARGE` with "raise the limit with maxUpdateInfoSize … See …#channel-files-are-limited-to-10-mib", then `ERR_UPDATER_INVALID_MAX_UPDATE_INFO_SIZE` (and A logs no request), then a normal check.
+- [ ] **D9. Channel-file size limit** (#10508). Launch with `QA_MAX_UPDATE_INFO_SIZE=256` (below the about 700-byte `latest-mac.yml`; 1024 was enough while F13 listed the dmg 6 times), then `-1`, then `0`.
+  - Pass: `ERR_UPDATER_RESPONSE_TOO_LARGE` (F10, #10633) with "raise the limit with maxUpdateInfoSize … See …#channel-files-are-limited-to-10-mib", then `ERR_UPDATER_INVALID_MAX_UPDATE_INFO_SIZE` (and A logs no request), then a normal check.
 - [ ] **D10. A signed manifest with a staged rollout** (#10530 #10423).
   ```sh
   node scripts/qa.mjs dev-key on && printf 'stagingPercentage: 50\n' >> server/updates/latest-mac.yml   # launch + check: (1)
@@ -343,7 +344,7 @@ export ELECTRON_BUILDER_UPDATE_SIGN_KEY_FILE=$PWD/keys/update-private-key.pem   
     - "Update manifest signature verified…".
     - 1.0.2 runs from `QA Apps\AutoUpdateProto`.
     - `reg query HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall /s /f AutoUpdateProto` shows `InstallLocation` with no stray `"`.
-    - `install.log` exists in the install dir (log-enabled stub).
+    - The log-enabled stub (#10483) is checked in B3. The installer writes no `install.log` here (F19).
   - Optional control: on the Mac, re-sign the forged manifest and serve it:
     ```sh
     node scripts/qa.mjs serve win-forged-1.0.2
@@ -357,6 +358,11 @@ export ELECTRON_BUILDER_UPDATE_SIGN_KEY_FILE=$PWD/keys/update-private-key.pem   
   - Copy any harmless exe to `%TEMP%\QA.exe` as a decoy.
   - Run `AutoUpdateProto 1.0.2.exe` (portable) and confirm the app starts, not the decoy.
   - Delete the decoy.
+- [ ] **W10. Reinstall over the log-enabled 1.0.2 install** (#10483; findings F18, F19)
+  - After W7, check that the QA Apps install dir has no `install.log` (F19).
+  - Run `AutoUpdateProto Setup 1.0.2.exe /S` over the 1.0.2 install.
+  - Record the exit code and the `Can't rename` line in `install.log`: exit 2 means F18 is still open, exit 0 means it is fixed. 1.0.2 stays installed either way.
+  - The next W0 uninstalls this install plainly (without `--updated`, which works) before it installs 1.0.0.
 
 ## Session L — Linux VM
 
@@ -405,35 +411,53 @@ These came from the audit of the source at `09e5e383d`, re-checked against `8a9b
   - Suspected cause: `configurePipes` opens the `createWriteStream` asynchronously. When the limit trips on the first chunk, the callback runs before the file exists, so `removeFileIfAny()` empties `pending/` and the late open then creates the temp file.
   - On Windows, unlinking a file that is still open can fail as well.
   - D13 checks for it. A fix is on branch `fix/download-size-cap-temp-file`.
-- **F2 — doc: next-launch version mismatch error code** (medium). `v27-runtime-changes.md#nsis-update-installers-must-carry-the-updates-version` says a mismatch at the next launch fails with `ERR_UPDATER_INVALID_SIGNATURE`. `BaseUpdater.installPendingUpdate` dispatches `ERR_UPDATER_INSTALLER_VERSION_MISMATCH`, which nsisInstallerVersionTest and the commit message also expect.
+- **F2 — doc: next-launch version mismatch error code** (medium; **fixed by #10636**). `v27-runtime-changes.md#nsis-update-installers-must-carry-the-updates-version` says a mismatch at the next launch fails with `ERR_UPDATER_INVALID_SIGNATURE`. `BaseUpdater.installPendingUpdate` dispatches `ERR_UPDATER_INSTALLER_VERSION_MISMATCH`, which nsisInstallerVersionTest and the commit message also expect.
 - **F3 — blackbox e2e: Parallels VM mode is broken by #10566** (medium; **fixed by #10620**). `runTestWithinServer` serves `http://<parallels-host-ip>`, which is not loopback, and the fixture sets no `allowInsecureFeed`, so every VM update launch fails with `ERR_UPDATER_INSECURE_FEED`. Fixed on the e2e branch.
 - **F4 — blackbox e2e never reaches Authenticode, `publisherName` or the ProductVersion check** (medium; **fixed by #10620**). Every served config is `{ verifyUpdateCodeSignature: false }`. Covered by the new NSIS e2e cases.
-- **F5 — `sign-update-manifest` has no YAML-alias check** (medium)
+- **F5 — `sign-update-manifest` has no YAML-alias check** (medium; **fixed by #10631**)
   - `--verify` reports "verified" for a manifest that `electron-builder verify` fails for aliases.
   - Re-signing expands aliases silently (js-yaml dump with `noRefs`).
   - Yet cli.md and signed-update-manifests.md say it runs the same check as `electron-builder verify`.
-- **F6 — URLs with their query still printed** (low). `ERR_UPDATER_ZIP_FILE_NOT_FOUND` (MacUpdater), `ERR_UPDATER_NO_CHECKSUM` and `ERR_UPDATER_NO_FILES_PROVIDED` (Provider) print file URLs including the query. That goes against #10568, though its list did not claim them.
-- **F7 — migration links** (low). The packaged `allowInsecureFeed` warning and the three `login` warnings link `features/auto-update#…`, not a `migration/v27-*` page, as the project rule asks for behavior changes.
-- **F8 — #10525 shipped as a patch with no runtime warning** (low). An app that calls `installPendingUpdateIfAvailable()` after an `await` or a dialog is now pre-empted by the automatic install at launch, which quits the app.
-- **F9 — changelog consistency** (low)
+- **F6 — URLs with their query still printed** (low; **fixed by #10632**). `ERR_UPDATER_ZIP_FILE_NOT_FOUND` (MacUpdater), `ERR_UPDATER_NO_CHECKSUM` and `ERR_UPDATER_NO_FILES_PROVIDED` (Provider) print file URLs including the query. That goes against #10568, though its list did not claim them.
+- **F7 — migration links** (low; **fixed by #10634**). The packaged `allowInsecureFeed` warning and the three `login` warnings link `features/auto-update#…`, not a `migration/v27-*` page, as the project rule asks for behavior changes.
+- **F8 — #10525 shipped as a patch with no runtime warning** (low; **documented by #10641**). An app that calls `installPendingUpdateIfAvailable()` after an `await` or a dialog is now pre-empted by the automatic install at launch, which quits the app.
+- **F9 — changelog consistency** (low; the stray heading is **fixed by #10640**, the rest was withdrawn)
   - #10566 is Major in electron-updater, Minor in builder-util-runtime and in the root electron-builder section, and Patch in app-builder-lib.
   - The root CHANGELOG alpha.15 section re-lists #10036, #10270 and #10419, which shipped earlier.
   - `packages/electron-updater/CHANGELOG.md` starts with a stray `## 4.3.0` heading.
-- **F10 — #10508 error code and changeset** (low). The error code is `ERR_HTTP_RESPONSE_TOO_LARGE`, not `ERR_UPDATER_*`, and the patch changeset adds API (`maxUpdateInfoSize`). The docs and the migration link are fixed by #10603.
+- **F10 — #10508 error code and changeset** (low; **fixed by #10633**: `ERR_UPDATER_RESPONSE_TOO_LARGE`, minor changeset). The error code is `ERR_HTTP_RESPONSE_TOO_LARGE`, not `ERR_UPDATER_*`, and the patch changeset adds API (`maxUpdateInfoSize`). The docs and the migration link are fixed by #10603.
 - **F11 — #10480 vs #10475** (fixed by #10603). The contradictory linuxToolsMac 1.1.1 entry is gone from the regenerated changelog, and migrate-schema rewrites the appimage `1.2.0` pin. Only B6's report on a leftover `toolsets.linuxToolsMac` key is left to record.
-- **F12 — #10600 docs** (low). `ERR_UPDATER_NO_PUBLISHER_NAME` is practically unreachable, because reading `app-update.yml` fails with `ENOENT` first. Also, the v27-build-changes "only opt-out" wording ignores `autoUpdater.publisherName`.
-- **F13 — pre-existing: `latest*.yml` lists the dmg 6 times** (low). `writeUpdateInfoFiles` pushes into one `files` array that 3 channels × 2 publish configs share, and all of it is inside the signed payload. Harmless to MacUpdater.
-- **F14 — docs** (low)
+- **F12 — #10600 docs** (low; **fixed by #10637**). `ERR_UPDATER_NO_PUBLISHER_NAME` is practically unreachable, because reading `app-update.yml` fails with `ENOENT` first. Also, the v27-build-changes "only opt-out" wording ignores `autoUpdater.publisherName`.
+- **F13 — pre-existing: `latest*.yml` lists the dmg 6 times** (low; **fixed by #10639**). `writeUpdateInfoFiles` pushes into one `files` array that 3 channels × 2 publish configs share, and all of it is inside the signed payload. Harmless to MacUpdater.
+- **F14 — docs** (low; **fixed by #10638**)
   - `auto-update.md#local-update-server` says an installed test build needs https, but a loopback port-forward also satisfies the code.
   - `migrate-schema` reads only literal `url` values in JS configs, so an env-driven URL gets no advisory.
-- **F15 — `electron-builder publish -f` fails for any config with a `publish` list** (medium; already in alpha.14, not a regression)
+- **F15 — `electron-builder publish -f` fails for any config with a `publish` list** (medium; already in alpha.14, not a regression; fix in **#10630, still open** on 2026-11-20)
   - `publishArtifactsWithOptions` loads the config, and `Packager.loadAndValidateConfig` loads the same file again with the first result as `configFromOptions`. The merge then breaks:
     - a JS config is the same `require`d object both times, so `publish` ends up containing itself, and `getSafeEffectiveConfig` throws "Converting circular structure to JSON";
     - JSON/YAML configs fail validation with "configuration.publish should be one of these: array | null | string".
   - Repro: an empty project with `publish: [{ provider: "generic", url }]` and `electron-builder publish -f any.txt`. It fails on published 27.0.0-alpha.14 and on `f4df97d1c` alike.
   - It also means the #10582 pre-upload warnings of `publish -f` (B6) cannot be seen for such projects.
-- **F17 — e2e: a registered Windows Parallels VM hijacks every local mac blackbox case** (low, pre-existing, test-only)
+- **F17 — e2e: a registered Windows Parallels VM hijacks every local mac blackbox case** (low, pre-existing, test-only; **fixed by #10635**)
   - `runUpdateScenario` (`test/src/updater/blackboxUpdateHelpers.ts`) passes the detected Windows VM to `handleInitialInstallPerOS`, `runTestWithinServer` and the scenario for every target, not only `nsis`.
   - `getWindowsVm` also starts a stopped or suspended VM.
   - So with any Windows VM in Parallels, the mac cases launch `TestApp.app` inside Windows through `prlctl exec … powershell` and fail. Seen locally for "arm64 - update request rules"; CI has no VM and is unaffected.
   - Fix: `const vm = target === "nsis" ? await windowsVmPromise : undefined`.
+- **F18 — with `installerDebugLogging`, every update over a log-enabled install fails** (high for apps that turn it on; pre-existing since #6551 in 2022, made easy to reach by #10483; **fixed by #10627**)
+  - `un.onInit` (uninstaller.nsh) runs `SetOutPath $INSTDIR` and `${LogSet} on`, so the old version's uninstaller keeps `$INSTDIR\install.log` open.
+  - The installer always runs the old uninstaller with `--updated` (installUtil.nsh). On `--updated`, `un.atomicRMDir` renames every file in `$INSTDIR` into `$PLUGINSDIR\old-install`, including the open log. The rename fails, the files are restored, and the uninstaller aborts: `Can't rename "…\AutoUpdateProto" to "…\old-install".`
+  - The installer exits with code 2 and the update is not installed. The first update into a log-enabled build works, because the old uninstaller is not log-enabled yet; every later one fails.
+  - Seen in the Windows VM (W10): `AutoUpdateProto Setup 1.0.2.exe /S` over the 1.0.2 install, twice.
+  - Fix idea: log to a file outside `$INSTDIR` in the uninstaller (for example `$TEMP` or `$PLUGINSDIR`), or `LogSet off` before `un.atomicRMDir`.
+- **F19 — `installerDebugLogging` writes no installer log on a per-user one-click install** (medium; pre-existing since #6024; **fixed by #10628**)
+  - `.onInit` (installer.nsi) runs `SetOutPath $INSTDIR` and `${LogSet} on` before `initMultiUser` sets `$INSTDIR`, and the template has no `InstallDir`. NSIS fixes the log path at that first `LogSet`, so (reading the NSIS source) it points at `\install.log` on the drive root, which a per-user installer cannot write; no such file appeared.
+  - Only an unquoted `/D=` without spaces sets `$INSTDIR` before `.onInit`. electron-updater quotes `/D=` for a path with a space, so updates never get one.
+  - Seen in the Windows VM: a fresh `/S` install and W7's updater install wrote no `install.log`. The only `install.log` comes from the uninstaller (F18).
+  - Fix idea: call `${LogSet} on` after `initMultiUser`, once `$INSTDIR` is final.
+- **F20 — on macOS, Windows signing with a password-protected pfx always fails** (high for anyone signing Windows builds on a Mac with a password; pre-existing since win-codesign 1.3.1, #10414; still in 1.3.3)
+  - Every osslsigncode run fails with `Failed to read key or certificates` and `UI routines:open_console:unknown ttyget errno value … errno=102`, then the build fails.
+  - Cause: electron-builder starts osslsigncode with `execFile`, whose stdin on macOS is a socketpair (libuv). With a password, OpenSSL's PKCS#12 loading opens its console UI, whose `tcgetattr` on a socket fails with `EOPNOTSUPP` (102), an errno `ui_openssl.c` does not tolerate (it does for a pipe's `ENOTTY`). The right `-pass` never gets used.
+  - Repro with the bundled binary: from Node, `spawnSync(osslsigncode, ["sign", …, "-pkcs12", pfx, "-pass", pw], { stdio: ["pipe", …] })` fails; with stdin `"ignore"`, `"inherit"` or a shell pipe it succeeds. An empty-password pfx works either way.
+  - Seen in session B (B1–B3) with `~/qa-cert/qa-pw.pfx`; it also explains the earlier "signing fails in my shell" runs.
+  - Fix idea: spawn osslsigncode with stdin `/dev/null` (`stdio: ["ignore", "pipe", "pipe"]`) in `SigntoolBaseSignManager.doSign` (and the other osslsigncode calls), or pass the password with `-readpass` from a temp file.
+  - Harness workaround: sign with `~/qa-cert/qa.pfx` (same certificate, empty password).

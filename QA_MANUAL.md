@@ -2,7 +2,7 @@
 
 This is how to run the QA for electron-updater 7.0.0-alpha.14 and electron-builder 27.0.0-alpha.15. The scripts in `qa/run/` run every check in `QA_TEST_PLAN.md` without clicks, and the #10620 e2e cases as well. This manual lists what you set up once, the commands in order, and the few steps that need you.
 
-**Under test:** the release commit checked out in `../electron-builder-5` (`changeset-release/master`, `f4df97d1c` on 2026-11-17). The scripts print the commit they run against.
+**Under test:** the release commit checked out in `../electron-builder-5` (`changeset-release/master`, `a483c9a74` on 2026-11-20, after the QA-findings fixes; `f4df97d1c` before). Test the release commit, not master: master's versions are not bumped, and B4 depends on electron-updater's version. The scripts print the commit they run against.
 
 ## What runs by itself and what needs you
 
@@ -37,6 +37,7 @@ export WIN_CSC_LINK=<path to .pfx> WIN_CSC_KEY_PASSWORD=<password>              
 ```
 - **macOS:** a "Developer ID Application" identity in the login keychain signs the mac build. `security find-identity -v -p codesigning` lists what is there. On 2026-11-17 it showed only "Apple Development: …", so install the Developer ID certificate first, or M2 (Squirrel.Mac) can fail on the signature.
 - **First mac signing:** click "Always Allow" on the keychain prompt for `codesign`. Otherwise B1 waits on it.
+- **Use a pfx with an empty password on macOS** (`WIN_CSC_KEY_PASSWORD=`, for example `~/qa-cert/qa.pfx`). With a password, every osslsigncode run fails with `UI routines:open_console:unknown ttyget errno value … errno=102` (finding F20, QA_TEST_PLAN.md).
 - **The Windows certificate is required.** electron-builder 27 refuses to build an updatable Windows app without one ("Cannot write app-update.yml without publisherName: no code signing certificate is configured", #10600). Without it, B1–B3 fail for Windows and session W has nothing to install.
 - **No Windows certificate:** make a self-signed one with the recipe in QA_TEST_PLAN.md S4. Then also set `export QA_WIN_CER=$HOME/qa-cert/qa.cer`: session W imports it into the VM's `LocalMachine\Root`, and W-cleanup removes it.
 - **Rebuilding one platform:** `QA_PLATFORMS=win node qa/run/session-b.mjs --only B1,B2,B3` rebuilds only that platform. The others' checks are skipped.
@@ -141,10 +142,12 @@ E1/E2 show whether CI ran `blackboxNsisAuthenticode` or skipped it. On 2026-11-1
 - W5 shows the real error code; the migration doc still says `ERR_UPDATER_INVALID_SIGNATURE` (F2).
 - B6 notes "sign-update-manifest --verify … reports verified" for the aliased manifest: F5 is still open.
 - B6 "publish -f runs at all" fails with "Converting circular structure to JSON": F15, already in alpha.14.
+- W10 notes "fails (finding F18 still open)": an update over an install built with `installerDebugLogging` exits with code 2. It also notes F19 (no installer `install.log`). Both are pre-existing.
 
 **Known local limits (not failures of the release):**
 - D15 is skipped while `~/Development/.pnp.cjs`, a stray Yarn Plug'n'Play manifest, sits above this repo: esbuild resolves through it. Move it aside to run D15; `autoUpdaterBundleTest` covers it in CI anyway.
 - E4 (mac e2e) adds untracked entitlements files that turn off library validation for the self-signed test app, because this Mac refuses to launch it otherwise. It deletes them afterwards.
 - Session L stops before L2/L3 when something in the VM holds the dpkg lock. On 2026-11-17 two `aptd` processes (a stuck background software update) had held it for over 3 hours. The runner prints the processes. Finish or cancel that update in the VM's Software app, or run `sudo systemctl stop aptd`, then re-run L.
 - E4 (the mac e2e case) is skipped while a Windows VM is registered in Parallels. The e2e helper would launch the mac app inside it (finding F17). CI covers the case (E1); `--force-mac-e2e` runs it anyway.
+- On 2026-11-18 a `/S` installer started in the Windows VM by hand hung for over 20 minutes in its "is the app running" check. Its child `powershell.exe … Get-CimInstance Win32_Process …` spun the CPU and could not be ended, even as SYSTEM. The same query takes 0.06 s from a normal shell, and the installs the updater started in W6/W7 did not hang. If W0, W7 or W10 times out like that, restart the Windows VM and re-run W.
 - E5 first checks that the Windows VM reaches the address the e2e helper serves the feed on (the first `prl*`/`bridge*` interface). If it stops there, give the VM the Mac's shared network, or remove the extra Parallels networks.

@@ -165,7 +165,8 @@ function version(value) {
 
 function stash(name) {
   if (!name) fail("usage: stash <name>")
-  const files = servedYml()
+  // the qa-*.yml channels are derived from the v1.0.1 stash (manifests): a stashed copy would go stale after a rebuild
+  const files = servedYml().filter(it => !it.startsWith("qa-"))
   if (files.length === 0) fail("server/updates has no manifests to stash")
   const dir = path.join(stashRoot, name)
   fs.mkdirSync(dir, { recursive: true })

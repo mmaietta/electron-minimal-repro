@@ -171,6 +171,11 @@ session.check("B2", "1.0.1 builds, all manifests signed", async (t, options) => 
     "every served manifest is 1.0.1 and signed",
     served,
   )
+  // F13: every channel and publish configuration of an artifact shared one files array, so latest-mac.yml listed the dmg 6 times
+  for (const file of fs.readdirSync(updatesDir).filter(it => /^latest.*\.yml$/.test(it))) {
+    const urls = [...fs.readFileSync(path.join(updatesDir, file), "utf8").matchAll(/^\s*- url: (.+?)\s*$/gm)].map(it => it[1])
+    t.ok(urls.length > 0 && new Set(urls).size === urls.length, `${file} lists each file once (F13)`, urls)
+  }
 })
 
 session.check("B3", "extra builds: offline Windows signing, log-enabled NSIS stubs, a v2 blockmap", async (t, options) => {
@@ -194,6 +199,13 @@ session.check("B3", "extra builds: offline Windows signing, log-enabled NSIS stu
     return
   }
   if (winLog != null) t.count(winLog, "ELECTRON_BUILDER_OFFLINE is set, so Windows signatures get no timestamp", 1, "one offline-signing (no timestamp) warning")
+  if (SELECTED.has("win")) {
+    // #10483: only a stub compiled with NSIS_CONFIG_LOG=yes has the log file name, stored UTF-16 (Unicode NSIS)
+    const logName = Buffer.from("install.log", "utf16le")
+    const logEnabled = file => fs.existsSync(path.join(updatesDir, file)) && fs.readFileSync(path.join(updatesDir, file)).includes(logName)
+    t.ok(logEnabled("AutoUpdateProto Setup 1.0.2.exe") && logEnabled("AutoUpdateProto Web Setup 1.0.2.exe"), "the 1.0.2 nsis and nsis-web installers have the log-enabled NSIS stub")
+    t.ok(!logEnabled("AutoUpdateProto Setup 1.0.1.exe"), "the 1.0.1 installer (no installerDebugLogging) has the default stub")
+  }
   if (SELECTED.has("mac")) t.ok(magic(firstMatch(updatesDir, /^AutoUpdateProto-1\.1\.0-.*mac\.zip\.blockmap$/), 2) === "1F8B", "the 1.1.0 blockmap is v2 (gzip, 1f8b)")
   t.ok(
     magic(firstMatch(updatesDir, /^AutoUpdateProto-1\.0\.1-.*mac\.zip\.blockmap$/), 4) === Buffer.from("EBB3").toString("hex").toUpperCase(),
@@ -299,9 +311,8 @@ session.check("B6", "verify, publish -f and migrate-schema (#10582 #10566 #10568
   t.has(verify.out, /alias/i, "verify reports the YAML aliases")
   t.has(verify.out, /size|sha512/i, "verify reports the zip's stale size/sha512")
   const signVerify = eb(["sign-update-manifest", "--verify", manifest, `-c.updateManifest.publicKey=${publicKey}`])
-  t.note(
-    `sign-update-manifest --verify on the same aliased manifest: exit ${signVerify.code} — ${/verified/i.test(signVerify.out) ? "reports verified (finding F5 still open)" : "refused (F5 fixed)"}`,
-  )
+  t.ok(signVerify.code !== 0, "sign-update-manifest --verify fails the same aliased manifest (F5)", signVerify.out.trim().split("\n").slice(-4))
+  t.has(signVerify.out, "uses YAML aliases", "sign-update-manifest --verify gives verify's alias message (F5)")
 
   const target = path.join(scratchDir, "publish-target")
   fs.mkdirSync(target, { recursive: true })

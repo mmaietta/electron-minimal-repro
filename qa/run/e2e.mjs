@@ -3,10 +3,10 @@
 // confirm in CI what only CI can prove, and run the cases locally where this Mac can.
 //
 //   node qa/run/e2e.mjs [--list] [--only E1,E3] [--no-compile]
-//     E1/E2  CI audit: did the new files run (not skip) and pass on master's merge commit and on the release commit
+//     E1/E2  CI audit: did the new files run (not skip) and pass on the #10620 merge commit and on the checkout's commit
 //     E3     local: blackboxHarnessTest + generateToolsetFilenamesTest (any OS, ~1 min)
 //     E4     local: MAC-REQUEST-RULES on this Mac (arm64, ~5 min)
-//     E5     local: NSIS-INSTALLER-CHECKS + NSIS-NEXT-LAUNCH-MODES in Parallels VM mode (~30–50 min)
+//     E5     local: NSIS-INSTALLER-CHECKS + NSIS-NEXT-LAUNCH-MODES + NSIS-DEBUG-LOGGING in Parallels VM mode (~40–60 min)
 //     E6     local: APPIMAGE-REQUEST-RULES in Docker (arm64 image on this Mac, ~20 min)
 //
 // Runs in ../electron-builder-5 (QA_BUILDER_DIR). Nothing there is committed or left behind: E4's entitlements files
@@ -47,7 +47,7 @@ function testRunFor(sha) {
 }
 
 // For every job of the run that could run a new file: the vitest result lines that name a new file.
-function auditRun(t, label, sha) {
+function auditRun(t, label, sha, files = NEW_FILES) {
   const run = testRunFor(sha)
   if (run == null) {
     t.manual(`${label}: no Test run for ${sha.slice(0, 9)} yet`)
@@ -58,12 +58,13 @@ function auditRun(t, label, sha) {
     t.manual(`${label}: the Test run is still in progress`)
     return
   }
-  const jobs = gh(["api", `repos/${REPO}/actions/runs/${run.id}/jobs?per_page=100&filter=latest`, "--jq", '.jobs[] | select(.name | test("macOS|Windows|appimage-update-rules")) | "\\(.id)\\t\\(.conclusion)\\t\\(.name)"'])
+  // per_page=100 answers 502 for some runs (seen for #10620's 64-job run): pages of 50
+  const jobs = gh(["api", "--paginate", `repos/${REPO}/actions/runs/${run.id}/jobs?per_page=50&filter=latest`, "--jq", '.jobs[] | select(.name | test("macOS|Windows|appimage-update-rules")) | "\\(.id)\\t\\(.conclusion)\\t\\(.name)"'])
     .trim()
     .split("\n")
     .filter(Boolean)
     .map(line => line.split("\t"))
-  const seen = new Map(NEW_FILES.filter(it => it !== "blackboxHarnessTest").map(it => [it, []]))
+  const seen = new Map(files.filter(it => it !== "blackboxHarnessTest").map(it => [it, []]))
   const failedJobs = []
   for (const [id, conclusion, name] of jobs) {
     if (conclusion === "failure") failedJobs.push(name)
@@ -109,8 +110,9 @@ session.check("E1", "CI: the new e2e files ran and passed on master's merge comm
   auditRun(t, "master", merge)
 })
 
-session.check("E2", "CI: the new e2e files on the release commit", async t => {
-  auditRun(t, "release", sh("git", ["rev-parse", "HEAD"], { cwd: builderDir }).stdout.trim())
+session.check("E2", "CI: the new e2e files on the checkout's commit", async t => {
+  // blackboxNsisDebugLogging came with the F18 fix (#10627)
+  auditRun(t, "checkout", sh("git", ["rev-parse", "HEAD"], { cwd: builderDir }).stdout.trim(), [...NEW_FILES, "blackboxNsisDebugLogging"])
 })
 
 // ---------------------------------------------------------------------------
@@ -163,15 +165,9 @@ const ENTITLEMENTS = `<?xml version="1.0" encoding="UTF-8"?>
 </dict></plist>
 `
 
-session.check("E4", "local: MAC-REQUEST-RULES (arm64 - update request rules)", async (t, options) => {
+session.check("E4", "local: MAC-REQUEST-RULES (arm64 - update request rules)", async t => {
   if (process.platform !== "darwin" || process.arch !== "arm64") {
     t.skip("arm64 macOS only")
-    return
-  }
-  // F17: runUpdateScenario hands the detected Windows VM to every target, so with any Windows VM registered in
-  // Parallels (it is started when it is not running) the mac case is launched inside the Windows VM and fails
-  if (vmState(WIN_VM) != null && !options.flags.has("force-mac-e2e")) {
-    t.skip(`a Windows Parallels VM ("${WIN_VM}") is registered: the e2e helper would run the mac app inside it (finding F17). CI covers this case (E1); --force-mac-e2e runs it anyway`)
     return
   }
   const buildDir = path.join(builderDir, "test", "fixtures", "test-app", "build")
@@ -199,7 +195,7 @@ function helperHostIp() {
   return null
 }
 
-session.check("E5", "local: NSIS-INSTALLER-CHECKS + NSIS-NEXT-LAUNCH-MODES in Parallels VM mode", async t => {
+session.check("E5", "local: NSIS-INSTALLER-CHECKS + NSIS-NEXT-LAUNCH-MODES + NSIS-DEBUG-LOGGING in Parallels VM mode", async t => {
   const before = vmState(WIN_VM)
   if (before !== "running") {
     t.manual(`start the VM "${WIN_VM}" and log in (it is ${before ?? "missing"})`)
@@ -218,7 +214,9 @@ session.check("E5", "local: NSIS-INSTALLER-CHECKS + NSIS-NEXT-LAUNCH-MODES in Pa
     await probe.stop()
   }
   try {
-    await ciTest(t, "nsis-vm", "blackboxNsisInstallerChecks,blackboxNsisNextLaunchModes", { expectRan: ["blackboxNsisInstallerChecks", "blackboxNsisNextLaunchModes"] })
+    await ciTest(t, "nsis-vm", "blackboxNsisInstallerChecks,blackboxNsisNextLaunchModes,blackboxNsisDebugLogging", {
+      expectRan: ["blackboxNsisInstallerChecks", "blackboxNsisNextLaunchModes", "blackboxNsisDebugLogging"],
+    })
     t.note("VM mode skips expectNoPartialDownload and expectInstalledNsis (the host cannot read the guest's files): CI's native run covers them")
   } finally {
     if (vmState(WIN_VM) === "suspended") sh("prlctl", ["resume", WIN_VM])

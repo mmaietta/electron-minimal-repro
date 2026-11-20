@@ -174,6 +174,7 @@ session.check("D7", "login gets the request URL (#10565 #10549 #10566)", async t
   {
     const r = await launch(t, "none", { QA_LOGIN: "none" }, authYml)
     t.count(r.out, "autoUpdater has no login listener", 1, "none: one no-listener warning")
+    t.has(r.out, /no login listener.*v27-runtime-changes#update-credentials-stay-on-the-feeds-origin/, "none: the warning links the migration section (F7)")
     t.has(r.out, doneError("HTTP_ERROR_401"), "none: HTTP_ERROR_401")
     t.ok(r.ms < 30_000, `none: fails at once, not after a timeout (${r.ms} ms)`)
   }
@@ -186,6 +187,7 @@ session.check("D7", "login gets the request URL (#10565 #10549 #10566)", async t
   {
     const r = await launch(t, "throw", { QA_LOGIN: "throw" }, authYml)
     t.has(r.out, "A login listener threw for the server 127.0.0.1:8080", "throw: the listener-threw warning")
+    t.has(r.out, /login listener threw.*v27-runtime-changes#update-credentials-stay-on-the-feeds-origin/, "throw: the warning links the migration section (F7)")
     t.has(r.out, doneError("HTTP_ERROR_401"), "throw: HTTP_ERROR_401")
     t.none(updaterLines(r.out), "QA-SECRET-LOGIN", "throw: the listener's error text is not logged")
   }
@@ -193,6 +195,7 @@ session.check("D7", "login gets the request URL (#10565 #10549 #10566)", async t
   {
     const r = await launch(t, "legacy", { QA_LOGIN: "legacy", QA_CHANNEL: "qa" }, crossOriginAuth)
     t.count(r.out, "every login handler answers without the url argument", 1, "legacy: one legacy-handler warning")
+    t.has(r.out, /without the url argument.*v27-runtime-changes#update-credentials-stay-on-the-feeds-origin/, "legacy: the warning links the migration section (F7)")
     t.ok(r.b.requests(it => isZip(it) && it.status === 200 && it.headers.includes("authorization")).length > 0, "legacy: B gets a 200 with authorization (a legacy handler answers every origin)", r.b.lines())
   }
   {
@@ -224,10 +227,11 @@ session.check("D8", "YAML alias budget (#10514 #10536 #10575 #10522)", async t =
 
 session.check("D9", "channel-file size limit (#10508)", async t => {
   {
-    const r = await launch(t, "1024", { QA_MAX_UPDATE_INFO_SIZE: "1024" })
-    t.has(r.out, doneError("ERR_HTTP_RESPONSE_TOO_LARGE"), "1024: ERR_HTTP_RESPONSE_TOO_LARGE")
-    t.has(r.out, "raise the limit with maxUpdateInfoSize", "1024: names the option")
-    t.has(r.out, "#channel-files-are-limited-to-10-mib", "1024: links the migration section")
+    // latest-mac.yml is about 700 bytes since F13 (#10639) lists each file once: 256 is below it
+    const r = await launch(t, "256", { QA_MAX_UPDATE_INFO_SIZE: "256" })
+    t.has(r.out, doneError("ERR_UPDATER_RESPONSE_TOO_LARGE"), "256: ERR_UPDATER_RESPONSE_TOO_LARGE (F10)")
+    t.has(r.out, "raise the limit with maxUpdateInfoSize", "256: names the option")
+    t.has(r.out, "#channel-files-are-limited-to-10-mib", "256: links the migration section")
   }
   {
     const r = await launch(t, "-1", { QA_MAX_UPDATE_INFO_SIZE: "-1" })
